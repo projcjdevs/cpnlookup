@@ -1,3 +1,7 @@
+import os
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["T_PGBAR"] = "0" 
+
 import click
 import sqlite3
 from rich.console import Console
@@ -113,6 +117,30 @@ def init(repo_name: str):
 
             conn.commit()
             conn.close()
+
+            # --- START AI EMBEDDING ---
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, file_path, chunk_type, docstring FROM chunks")
+            chunk_rows = cursor.fetchall()
+            conn.close()
+
+            if chunk_rows:
+                console.print("\n[bold yellow]Generating AI vector index...[/]")
+                
+                chunks_for_ai = [
+                    {"name": r[0], "file_path": r[1], "chunk_type": r[2], "docstring": r[3]} 
+                    for r in chunk_rows
+                ]
+                
+                from cpnlookup.indexer.embedder import embed_chunks
+                from cpnlookup.indexer.storage import save_faiss_index
+                
+                embeddings = embed_chunks(chunks_for_ai)
+                save_faiss_index(embeddings)
+                
+                console.print("[bold green]✓[/] AI Vector Index built successfully.")
+
             console.print(f"[bold green]✓[/] Successfully indexed {chunk_count} functions/classes.")
         except Exception as e:
             console.print(f"[bold red]Error:[/] {e}")

@@ -15,5 +15,5 @@ def embed_chunks(chunks):
         for c in chunks
     ]
 
-    embeddings = model.encode(texts, show_progress_bar=True)
+    embeddings = model.encode(texts, show_progress_bar=False)
     return embeddings
