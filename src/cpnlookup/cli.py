@@ -2,6 +2,7 @@ import click
 import sqlite3
 from rich.console import Console
 from rich.table import Table
+from rich import box 
 from cpnlookup.utils.config import save_github_token
 from cpnlookup.github.client import get_user_repos
 from cpnlookup.github.fetcher import fetch_repo_files
@@ -33,25 +34,36 @@ def auth(token: str):
 
 @cli.command()
 @click.argument('username')
-def profile(username: str):
+@click.argument('scope', required=False, default='default')
+def profile(username: str, scope: str):
+    """List repos for a GitHub user. Use 'all' to show everything."""
     with console.status(f"[bold cyan]Fetching repos for {username}..."):
         try:
             repos = get_user_repos(username)
         except Exception as e:
-            console.print(f"[bold red]Error fetching repos:[/] {e}")
+            console.print(f"[bold red]Error:[/] {e}")
             return
             
     if not repos:
         console.print(f"[yellow]No repositories found for {username}.[/]")
         return
-        
-    table = Table(title=f"{username}'s Repositories", show_header=True, header_style="bold magenta")
-    table.add_column("#", style="dim", width=4)
-    table.add_column("Repo Name", style="cyan")
+
+    show_all = scope.lower() == 'all'
+    limit = len(repos) if show_all else 20
+    display_repos = repos[:limit]
+
+    table = Table(
+        title=f"\n[bold]{username}'s Repositories[/]", 
+        box=box.ROUNDED,
+        header_style="bold magenta",
+        title_style="bold cyan"
+    )
+    table.add_column("#", style="dim", justify="center")
+    table.add_column("Repo Name", style="white")
     table.add_column("Stars", justify="right", style="yellow")
     table.add_column("Language", style="green")
     
-    for i, repo in enumerate(repos[:20], 1):
+    for i, repo in enumerate(display_repos, 1):
         table.add_row(
             str(i),
             repo.get("name", "Unknown"),
@@ -60,6 +72,11 @@ def profile(username: str):
         )
         
     console.print(table)
+
+    if not show_all and len(repos) > 20:
+        remaining = len(repos) - 20
+        console.print(f" [dim]... and {remaining} more repositories.[/]")
+        console.print(f" [bold cyan]Tip:[/] Run [italic]lookup profile {username} all[/] to see the full list.\n")
 
 @cli.command()
 @click.argument('repo_name')
