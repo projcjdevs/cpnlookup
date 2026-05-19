@@ -12,6 +12,8 @@ from cpnlookup.github.client import get_user_repos
 from cpnlookup.github.fetcher import fetch_repo_files
 from cpnlookup.indexer.storage import init_db, clear_local_index, get_local_db_path
 from cpnlookup.indexer.chunker import chunk_python_code
+from cpnlookup.retrieval.vector_search import search_chunks
+from cpnlookup.llm.ollama import check_ollama, chat_with_ollama
 
 console = Console()
 
@@ -30,11 +32,15 @@ def cli():
     """
     pass
 
+# auth Command
+
 @cli.command()
 @click.argument('token')
 def auth(token: str):
     save_github_token(token)
     console.print("[bold green]✓[/bold green] GitHub token saved successfully to ~/.cpnlookup/auth.json")
+
+# profile Command
 
 @cli.command()
 @click.argument('username')
@@ -81,6 +87,8 @@ def profile(username: str, scope: str):
         remaining = len(repos) - 20
         console.print(f" [dim]... and {remaining} more repositories.[/]")
         console.print(f" [bold cyan]Tip:[/] Run [italic]lookup profile {username} all[/] to see the full list.\n")
+
+# init Command
 
 @cli.command()
 @click.argument('repo_name')
@@ -145,6 +153,8 @@ def init(repo_name: str):
         except Exception as e:
             console.print(f"[bold red]Error:[/] {e}")
 
+# functions Command
+
 @cli.command()
 def functions():
     db_path = get_local_db_path()
@@ -172,6 +182,8 @@ def functions():
 
     console.print(table)
 
+# drop Command
+
 @cli.command()
 def drop():
     if click.confirm("Are you sure you want to delete the local index in this directory?"):
@@ -179,3 +191,63 @@ def drop():
             console.print("[bold green]✓ Local index dropped successfully.[/]")
         else:
             console.print("[yellow]No local .cpnlookup folder found here.[/]")
+
+# ask Command
+
+@cli.command()
+@click.argument('question')
+def ask(question: str):
+    """Ask a question about the indexed codebase."""
+    db_path = get_local_db_path()
+    if not db_path.exists():
+        console.print("[red]No index found. Run 'lookup init' first.[/]")
+        return
+
+    # 1. Check if Ollama is running
+    if not check_ollama():
+        console.print("[bold red]Error:[/] Ollama is not running.")
+        console.print("Please install Ollama from [cyan]https://ollama.com[/] and run it.")
+        return
+
+    with console.status("[bold cyan]Searching codebase and thinking..."):
+        # 2. Get relevant chunk IDs from FAISS
+        from cpnlookup.retrieval.vector_search import search_chunks
+        relevant_ids = search_chunks(question)
+        
+        # 3. Fetch the actual code from SQLite
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        context_blocks = []
+        
+        for idx in relevant_ids:
+            # We add 1 because FAISS is 0-indexed, but SQLite IDs start at 1
+            cursor.execute("SELECT name, file_path, source_code FROM chunks WHERE id = ?", (idx + 1,))
+            row = cursor.fetchone()
+            if row:
+                context_blocks.append(f"--- File: {row[1]} | Function: {row[0]} ---\n{row[2]}")
+        
+        conn.close()
+        
+        # 4. Build the AI Prompt
+        context_text = "\n\n".join(context_blocks)
+        prompt = f"""
+        You are a technical assistant. Use the following code snippets from a repository to answer the user's question.
+        If the answer isn't in the code, say you don't know.
+
+        CODE CONTEXT:
+        {context_text}
+
+        USER QUESTION:
+        {question}
+
+        ANSWER:
+        """
+        
+        # 5. Get Answer from Ollama
+        from cpnlookup.llm.ollama import chat_with_ollama
+        answer = chat_with_ollama(prompt)
+
+    # Display Result
+    console.print(f"\n[bold magenta]Question:[/] {question}")
+    console.print("-" * 30)
+    console.print(answer)
