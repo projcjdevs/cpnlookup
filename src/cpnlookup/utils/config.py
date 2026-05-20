@@ -24,3 +24,17 @@ def get_github_token() -> str:
             return data.get("github_token", "")
         except json.JSONDecodeError:
             return ""
+        
+def get_local_config() -> dict:
+    """Reads .cpnlookup/config.json if it exists."""
+    cfg_path = Path.cwd() / ".cpnlookup" / "config.json"
+    if not cfg_path.exists():
+        return {"model": "mistral", "top_k": 5}
+    with open(cfg_path, "r") as f:
+        return json.load(f)
+
+def save_local_config(config: dict):
+    """Saves the config to .cpnlookup/config.json."""
+    cfg_path = Path.cwd() / ".cpnlookup" / "config.json"
+    with open(cfg_path, "w") as f:
+        json.dump(config, f, indent=4)

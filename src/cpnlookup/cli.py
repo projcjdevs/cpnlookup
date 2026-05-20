@@ -122,6 +122,29 @@ def init(repo_name: str):
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (c['name'], c['file_path'], c['line_start'], c['line_end'], c['chunk_type'], c['source_code'], c['docstring']))
                         chunk_count += 1
+                        cursor.execute("""
+                            INSERT INTO graph_nodes (chunk_id, name, file_path)
+                            VALUES (?, ?, ?)
+                        """, (chunk_id, c['name'], c['file_path']))
+
+                    # --- START GRAPH EDGE CONSTRUCTION ---
+                        console.print("[bold yellow]Building call graph edges...[/]")
+                        cursor.execute("SELECT id, name FROM graph_nodes")
+                        nodes = cursor.fetchall()
+                        all_names = {n[1] for n in nodes}
+
+                        for node_id, node_name in nodes:
+                             # Fetch the source code for this node
+                            cursor.execute("SELECT source_code FROM chunks WHERE name = ?", (node_name,))
+                            source = cursor.fetchone()[0]
+                
+                            for target_name in all_names:
+                                if target_name != node_name and f"{target_name}(" in source:
+                                    cursor.execute("""
+                                        INSERT INTO graph_edges (source_id, target_name, edge_type)
+                                        VALUES (?, ?, ?)
+                                    """, (node_id, target_name, "calls"))
+                    # --- END GRAPH EDGE CONSTRUCTION ---
 
             conn.commit()
             conn.close()
@@ -197,57 +220,95 @@ def drop():
 @cli.command()
 @click.argument('question')
 def ask(question: str):
-    """Ask a question about the indexed codebase."""
     db_path = get_local_db_path()
     if not db_path.exists():
         console.print("[red]No index found. Run 'lookup init' first.[/]")
         return
 
-    # 1. Check if Ollama is running
+    from cpnlookup.llm.ollama import check_ollama, chat_with_ollama
     if not check_ollama():
         console.print("[bold red]Error:[/] Ollama is not running.")
-        console.print("Please install Ollama from [cyan]https://ollama.com[/] and run it.")
         return
 
-    with console.status("[bold cyan]Searching codebase and thinking..."):
-        # 2. Get relevant chunk IDs from FAISS
+    from cpnlookup.utils.config import get_local_config
+    cfg = get_local_config()
+    model_name = cfg.get("model", "mistral")
+    top_k = cfg.get("top_k", 5)
+
+    with console.status(f"[bold cyan]Querying {model_name} with Hybrid RAG..."):
         from cpnlookup.retrieval.vector_search import search_chunks
-        relevant_ids = search_chunks(question)
+        relevant_ids = search_chunks(question, top_k=top_k)
         
-        # 3. Fetch the actual code from SQLite
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         context_blocks = []
-        
+        seen_names = set()
+
         for idx in relevant_ids:
-            # We add 1 because FAISS is 0-indexed, but SQLite IDs start at 1
-            cursor.execute("SELECT name, file_path, source_code FROM chunks WHERE id = ?", (idx + 1,))
+            cursor.execute("""
+                SELECT id, name, file_path, source_code 
+                FROM chunks WHERE id = ?
+            """, (idx + 1,))
             row = cursor.fetchone()
+            
             if row:
-                context_blocks.append(f"--- File: {row[1]} | Function: {row[0]} ---\n{row[2]}")
+                c_id, name, path, code = row
+                if name not in seen_names:
+                    context_blocks.append(f"--- FILE: {path} | NODE: {name} ---\n{code}")
+                    seen_names.add(name)
+
+                # Graph Expansion: Find functions this node calls
+                cursor.execute("""
+                    SELECT target_name FROM graph_edges 
+                    WHERE source_id = (SELECT id FROM graph_nodes WHERE chunk_id = ?)
+                """, (c_id,))
+                neighbors = cursor.fetchall()
+                
+                for (n_name,) in neighbors:
+                    if n_name not in seen_names:
+                        cursor.execute("SELECT file_path, source_code FROM chunks WHERE name = ?", (n_name,))
+                        n_row = cursor.fetchone()
+                        if n_row:
+                            context_blocks.append(f"--- NEIGHBOR (Called by {name}): {n_row[0]} | {n_name} ---\n{n_row[1]}")
+                            seen_names.add(n_name)
         
         conn.close()
         
-        # 4. Build the AI Prompt
         context_text = "\n\n".join(context_blocks)
         prompt = f"""
-        You are a technical assistant. Use the following code snippets from a repository to answer the user's question.
-        If the answer isn't in the code, say you don't know.
-
-        CODE CONTEXT:
+        You are a technical assistant analyzing a codebase.
+        Use the following retrieved code context to answer the user's question.
+        
+        CONTEXT:
         {context_text}
 
         USER QUESTION:
         {question}
 
-        ANSWER:
+        FINAL ANSWER:
         """
         
-        # 5. Get Answer from Ollama
-        from cpnlookup.llm.ollama import chat_with_ollama
-        answer = chat_with_ollama(prompt)
+        answer = chat_with_ollama(prompt, model=model_name)
 
-    # Display Result
     console.print(f"\n[bold magenta]Question:[/] {question}")
+    console.print(f"[dim]Context size: {len(seen_names)} functions/classes analyzed.[/]")
     console.print("-" * 30)
     console.print(answer)
+
+# config Command
+
+@cli.command()
+@click.argument('key')
+@click.argument('value')
+def config(key, value):
+    """Change local settings: lookup config set model llama3"""
+    from cpnlookup.utils.config import get_local_config, save_local_config
+    
+    cfg = get_local_config()
+    # Handle numeric values for top_k
+    if key == "top_k":
+        value = int(value)
+        
+    cfg[key] = value
+    save_local_config(cfg)
+    console.print(f"[green]✓[/] Config updated: {key} = {value}")
