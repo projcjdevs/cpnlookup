@@ -16,6 +16,7 @@ from cpnlookup.indexer.storage import init_db, clear_local_index, get_local_db_p
 from cpnlookup.indexer.chunker import chunk_python_code
 from cpnlookup.retrieval.vector_search import search_chunks
 from cpnlookup.llm.ollama import check_ollama, chat_with_ollama
+from pathlib import Path
 
 console = Console()
 
@@ -30,7 +31,7 @@ def cli():
     ╚██████╗██║     ██║ ╚████║███████╗╚██████╔╝╚██████╔╝██║  ██╗╚██████╔╝██║     
      ╚═════╝╚═╝     ╚═╝  ╚═══╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝     
 
-    Local CLI tool for GitHub RAG, Call Graphs, and Codebase querying.
+    Local CLI tool for GitHub RAG, Call Graphs, and Codebase querying -- Made by @projcjdevs.
     """
     pass
 
@@ -177,6 +178,12 @@ def init(repo_name: str):
                 
                 console.print("[bold green]✓[/] AI Vector Index built successfully.")
 
+                from cpnlookup.utils.config import update_registry
+                
+                current_folder = os.getcwd()
+                update_registry(current_folder, repo_name, add=True)
+                console.print(f"[bold green]✓[/] Repo registered globally at {current_folder}")
+
             console.print(f"[bold green]✓[/] Successfully indexed {chunk_count} functions/classes.")
         except Exception as e:
             console.print(f"[bold red]Error:[/] {e}")
@@ -214,9 +221,16 @@ def functions():
 
 @cli.command()
 def drop():
+    """Delete the local .cpnlookup index in the current directory."""
     if click.confirm("Are you sure you want to delete the local index in this directory?"):
+        from cpnlookup.utils.config import update_registry
+        
+        current_folder = os.getcwd()
+
+        update_registry(current_folder, "", add=False)
+        
         if clear_local_index():
-            console.print("[bold green]✓ Local index dropped successfully.[/]")
+            console.print("[bold green]✓[/] Local index deleted and removed from registry.")
         else:
             console.print("[yellow]No local .cpnlookup folder found here.[/]")
 
@@ -317,3 +331,31 @@ def config(key, value):
     cfg[key] = value
     save_local_config(cfg)
     console.print(f"[green]✓[/] Config updated: {key} = {value}")
+
+# indexed Command
+
+@cli.command()
+def indexed():
+    """List all repositories indexed on this machine."""
+    from cpnlookup.utils.config import get_registry
+    registry = get_registry()
+    
+    if not registry:
+        console.print("[yellow]No repositories have been indexed yet.[/]")
+        return
+
+    table = Table(title="Globally Indexed Repositories", box=box.ROUNDED)
+    table.add_column("Repository", style="cyan")
+    table.add_column("Local Path", style="green")
+    table.add_column("Status", justify="center")
+
+    import os
+    for path, repo in registry.items():
+        # Check if the folder still exists on the hard drive
+        exists = os.path.exists(os.path.join(path, ".cpnlookup"))
+        status = "[green]Active[/]" if exists else "[red]Missing/Deleted[/]"
+        
+        table.add_row(repo, path, status)
+
+    console.print(table)
+    console.print(f"\n[dim]Total indexed: {len(registry)}[/]")

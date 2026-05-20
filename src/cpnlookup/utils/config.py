@@ -38,3 +38,28 @@ def save_local_config(config: dict):
     cfg_path = Path.cwd() / ".cpnlookup" / "config.json"
     with open(cfg_path, "w") as f:
         json.dump(config, f, indent=4)
+
+def update_registry(path: str, repo_name: str, add: bool = True):
+    """Adds or removes a repo path from the global registry."""
+    registry_file = get_global_dir() / "registry.json"
+    registry = {}
+    
+    if registry_file.exists():
+        with open(registry_file, "r") as f:
+            registry = json.load(f)
+    
+    if add:
+        registry[path] = repo_name
+    else:
+        registry.pop(path, None)
+        
+    with open(registry_file, "w") as f:
+        json.dump(registry, f, indent=4)
+
+def get_registry() -> dict:
+    """Returns the dictionary of all indexed repo paths."""
+    registry_file = get_global_dir() / "registry.json"
+    if not registry_file.exists():
+        return {}
+    with open(registry_file, "r") as f:
+        return json.load(f)

@@ -37,6 +37,24 @@ def init_db() -> None:
             embedding BLOB
         )
     """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS graph_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_id INTEGER REFERENCES chunks(id),
+            name TEXT NOT NULL,
+            file_path TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS graph_edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER REFERENCES graph_nodes(id),
+            target_name TEXT NOT NULL,
+            edge_type TEXT NOT NULL
+        )
+    """)
     
     conn.commit()
     conn.close()
