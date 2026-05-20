@@ -1,4 +1,6 @@
 import os
+
+from more_itertools import chunked
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["T_PGBAR"] = "0" 
 
@@ -121,7 +123,10 @@ def init(repo_name: str):
                             INSERT INTO chunks (name, file_path, line_start, line_end, chunk_type, source_code, docstring)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         """, (c['name'], c['file_path'], c['line_start'], c['line_end'], c['chunk_type'], c['source_code'], c['docstring']))
+
+                        chunk_id = cursor.lastrowid 
                         chunk_count += 1
+
                         cursor.execute("""
                             INSERT INTO graph_nodes (chunk_id, name, file_path)
                             VALUES (?, ?, ?)
