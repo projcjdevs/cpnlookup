@@ -1,4 +1,5 @@
 import ast
+import re
 from typing import List, Dict
 
 def chunk_python_code(file_path: str, code: str) -> List[Dict]:
@@ -32,4 +33,30 @@ def chunk_python_code(file_path: str, code: str) -> List[Dict]:
                 "docstring": docstring
             })
             
+    return chunks
+
+def chunk_markdown(file_path: str, content: str) -> List[Dict]:
+    """Splits markdown files by headers to preserve context."""
+    chunks = []
+    sections = re.split(r'(^#+\s.*)', content, flags=re.MULTILINE)
+    
+    current_header = "Introduction"
+    for i in range(len(sections)):
+        section = sections[i].strip()
+        if not section: continue
+        
+        if section.startswith('#'):
+            current_header = section.replace('#', '').strip()
+            continue
+            
+        chunks.append({
+            "name": f"README: {current_header}",
+            "file_path": file_path,
+            "line_start": 0, 
+            "line_end": 0,
+            "chunk_type": "documentation",
+            "source_code": section,
+            "docstring": f"Markdown documentation section: {current_header}"
+        })
+
     return chunks

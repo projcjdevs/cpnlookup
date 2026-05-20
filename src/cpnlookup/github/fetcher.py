@@ -9,8 +9,12 @@ def fetch_repo_files(repo_full_name: str) -> List[Dict]:
     if token:
         headers["Authorization"] = f"token {token}"
 
+    # Use a Session for faster downloads (keeps the connection alive)
+    session = requests.Session()
+    session.headers.update(headers)
+
     repo_url = f"https://api.github.com/repos/{repo_full_name}"
-    repo_res = requests.get(repo_url, headers=headers)
+    repo_res = session.get(repo_url)
     
     if repo_res.status_code == 404:
         raise Exception(f"Repository '{repo_full_name}' not found. Check the spelling.")
@@ -22,7 +26,7 @@ def fetch_repo_files(repo_full_name: str) -> List[Dict]:
         raise Exception("Could not find the default branch.")
 
     tree_url = f"https://api.github.com/repos/{repo_full_name}/git/trees/{default_branch}?recursive=1"
-    tree_res = requests.get(tree_url, headers=headers)
+    tree_res = session.get(tree_url)
     tree_data = tree_res.json()
     
     if "tree" not in tree_data:
@@ -33,18 +37,29 @@ def fetch_repo_files(repo_full_name: str) -> List[Dict]:
         if item["type"] == "blob":
             file_path = item["path"]
             
-            # Filter noise
+            # --- START FILTERING LOGIC ---
+            # 1. Skip obvious noise first
             if any(file_path.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.ico', '.lock', '.json']):
                 continue
             if ".github" in file_path or "node_modules" in file_path or "venv" in file_path:
                 continue
 
+            # 2. ONLY allow .py and .md files
+            # This ensures we don't grab text files, configs, or binaries
+            is_python = file_path.endswith('.py')
+            is_markdown = file_path.lower().endswith('.md')
+            
+            if not (is_python or is_markdown):
+                continue
+            # --- END FILTERING LOGIC ---
+
             blob_url = item["url"]
-            blob_res = requests.get(blob_url, headers=headers)
+            blob_res = session.get(blob_url)
             blob_data = blob_res.json()
             
             content_b64 = blob_data.get("content", "")
             try:
+                # Remove newlines before decoding base64
                 content_text = base64.b64decode(content_b64.replace("\n", "")).decode('utf-8')
             except:
                 continue

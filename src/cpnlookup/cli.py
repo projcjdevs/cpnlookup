@@ -107,55 +107,60 @@ def init(repo_name: str):
             cursor = conn.cursor()
             
             for f in files:
+                lang = 'python' if f['path'].endswith('.py') else 'markdown'
                 cursor.execute("""
                     INSERT OR IGNORE INTO raw_files (file_path, language, content, size_bytes)
                     VALUES (?, ?, ?, ?)
-                """, (f['path'], 'python' if f['path'].endswith('.py') else None, f['content'], f['size']))
+                """, (f['path'], lang, f['content'], f['size']))
             
             console.print(f"[bold green]✓[/] Downloaded {len(files)} files.")
             
-            console.print("[bold yellow]Chunking code into functions and classes...[/]")
+            console.print("[bold yellow]Chunking codebase...[/]")
             chunk_count = 0
             for f in files:
+                chunks = []
                 if f['path'].endswith('.py'):
                     chunks = chunk_python_code(f['path'], f['content'])
-                    for c in chunks:
-                        cursor.execute("""
-                            INSERT INTO chunks (name, file_path, line_start, line_end, chunk_type, source_code, docstring)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (c['name'], c['file_path'], c['line_start'], c['line_end'], c['chunk_type'], c['source_code'], c['docstring']))
-
-                        chunk_id = cursor.lastrowid 
-                        chunk_count += 1
-
-                        cursor.execute("""
-                            INSERT INTO graph_nodes (chunk_id, name, file_path)
-                            VALUES (?, ?, ?)
-                        """, (chunk_id, c['name'], c['file_path']))
-
-                    # --- START GRAPH EDGE CONSTRUCTION ---
-                        console.print("[bold yellow]Building call graph edges...[/]")
-                        cursor.execute("SELECT id, name FROM graph_nodes")
-                        nodes = cursor.fetchall()
-                        all_names = {n[1] for n in nodes}
-
-                        for node_id, node_name in nodes:
-                             # Fetch the source code for this node
-                            cursor.execute("SELECT source_code FROM chunks WHERE name = ?", (node_name,))
-                            source = cursor.fetchone()[0]
+                elif f['path'].lower().endswith('.md'):
+                    from cpnlookup.indexer.chunker import chunk_markdown
+                    chunks = chunk_markdown(f['path'], f['content'])
                 
-                            for target_name in all_names:
-                                if target_name != node_name and f"{target_name}(" in source:
-                                    cursor.execute("""
-                                        INSERT INTO graph_edges (source_id, target_name, edge_type)
-                                        VALUES (?, ?, ?)
-                                    """, (node_id, target_name, "calls"))
-                    # --- END GRAPH EDGE CONSTRUCTION ---
+                for c in chunks:
+                    cursor.execute("""
+                        INSERT INTO chunks (name, file_path, line_start, line_end, chunk_type, source_code, docstring)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (c['name'], c['file_path'], c['line_start'], c['line_end'], c['chunk_type'], c['source_code'], c['docstring']))
+
+                    chunk_id = cursor.lastrowid 
+                    chunk_count += 1
+
+                    cursor.execute("""
+                        INSERT INTO graph_nodes (chunk_id, name, file_path)
+                        VALUES (?, ?, ?)
+                    """, (chunk_id, c['name'], c['file_path']))
+
+            console.print("[bold yellow]Building call graph edges...[/]")
+            cursor.execute("SELECT id, name FROM graph_nodes")
+            nodes = cursor.fetchall()
+            all_names = {n[1] for n in nodes}
+
+            for node_id, node_name in nodes:
+                cursor.execute("SELECT source_code, chunk_type FROM chunks WHERE name = ?", (node_name,))
+                res = cursor.fetchone()
+                if not res or res[1] == 'documentation':
+                    continue
+                
+                source = res[0]
+                for target_name in all_names:
+                    if target_name != node_name and f"{target_name}(" in source:
+                        cursor.execute("""
+                            INSERT INTO graph_edges (source_id, target_name, edge_type)
+                            VALUES (?, ?, ?)
+                        """, (node_id, target_name, "calls"))
 
             conn.commit()
             conn.close()
 
-            # --- START AI EMBEDDING ---
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT name, file_path, chunk_type, docstring FROM chunks")
@@ -164,7 +169,6 @@ def init(repo_name: str):
 
             if chunk_rows:
                 console.print("\n[bold yellow]Generating AI vector index...[/]")
-                
                 chunks_for_ai = [
                     {"name": r[0], "file_path": r[1], "chunk_type": r[2], "docstring": r[3]} 
                     for r in chunk_rows
@@ -179,12 +183,12 @@ def init(repo_name: str):
                 console.print("[bold green]✓[/] AI Vector Index built successfully.")
 
                 from cpnlookup.utils.config import update_registry
-                
                 current_folder = os.getcwd()
                 update_registry(current_folder, repo_name, add=True)
                 console.print(f"[bold green]✓[/] Repo registered globally at {current_folder}")
 
-            console.print(f"[bold green]✓[/] Successfully indexed {chunk_count} functions/classes.")
+            console.print(f"[bold green]✓[/] Successfully indexed {chunk_count} units (Code + Docs).")
+            
         except Exception as e:
             console.print(f"[bold red]Error:[/] {e}")
 
