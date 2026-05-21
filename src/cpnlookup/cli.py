@@ -106,7 +106,7 @@ def commands():
     table.add_column("Command", style="cyan")
     table.add_column("Description", style="white")
     cmds = [("auth", "Save GitHub Token"), ("profile", "List user repos"), ("init", "Index repository"), 
-            ("status", "Show index info"), ("functions", "List code logic"), ("ask", "Hybrid RAG Query"),
+            ("functions", "List code logic"), ("ask", "Hybrid RAG Query"),
             ("indexed", "Global registry"), ("config", "Set model/top_k"),
             ("clone", "Git clone repo"), ("drop", "Delete local index")]
     for c, d in cmds: table.add_row(c, d)
