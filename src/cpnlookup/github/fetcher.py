@@ -9,7 +9,6 @@ def fetch_repo_files(repo_full_name: str) -> List[Dict]:
     if token:
         headers["Authorization"] = f"token {token}"
 
-    # Use a Session for faster downloads (keeps the connection alive)
     session = requests.Session()
     session.headers.update(headers)
 
@@ -36,22 +35,17 @@ def fetch_repo_files(repo_full_name: str) -> List[Dict]:
     for item in tree_data["tree"]:
         if item["type"] == "blob":
             file_path = item["path"]
-            
-            # --- START FILTERING LOGIC ---
-            # 1. Skip obvious noise first
+
             if any(file_path.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.ico', '.lock', '.json']):
                 continue
             if ".github" in file_path or "node_modules" in file_path or "venv" in file_path:
                 continue
 
-            # 2. ONLY allow .py and .md files
-            # This ensures we don't grab text files, configs, or binaries
             is_python = file_path.endswith('.py')
             is_markdown = file_path.lower().endswith('.md')
             
             if not (is_python or is_markdown):
                 continue
-            # --- END FILTERING LOGIC ---
 
             blob_url = item["url"]
             blob_res = session.get(blob_url)
@@ -59,7 +53,6 @@ def fetch_repo_files(repo_full_name: str) -> List[Dict]:
             
             content_b64 = blob_data.get("content", "")
             try:
-                # Remove newlines before decoding base64
                 content_text = base64.b64decode(content_b64.replace("\n", "")).decode('utf-8')
             except:
                 continue
