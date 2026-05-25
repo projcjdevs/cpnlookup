@@ -6,14 +6,20 @@ def get_model():
     global_models = get_global_dir() / "models"
     return SentenceTransformer('all-MiniLM-L6-v2', cache_folder=str(global_models))
 
-def embed_chunks(chunks):
-    """Converts code chunks into a matrix of embeddings."""
+def embed_chunks(chunks: list):
+    """Converts code chunks into a matrix of embeddings using batched processing."""
     model = get_model()
     
     texts = [
         f"File: {c['file_path']}\nName: {c['name']}\nType: {c['chunk_type']}\nDoc: {c['docstring']}" 
         for c in chunks
     ]
-
-    embeddings = model.encode(texts, show_progress_bar=False)
+    
+    # V2: Batched encoding
+    embeddings = model.encode(
+        texts, 
+        batch_size=32, 
+        show_progress_bar=True
+    )
+    
     return embeddings
