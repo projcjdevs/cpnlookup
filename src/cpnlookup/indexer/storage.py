@@ -1,7 +1,6 @@
 import sqlite3
 import shutil
-import faiss
-import numpy as np
+import os
 from pathlib import Path
 
 def get_local_db_path() -> Path:
@@ -59,15 +58,11 @@ def init_db() -> None:
     conn.commit()
     conn.close()
 
-def clear_local_index() -> bool:
-    local_dir = Path.cwd() / ".cpnlookup"
-    if local_dir.exists():
-        shutil.rmtree(local_dir)
-        return True
-    return False
-
-def save_faiss_index(embeddings: np.ndarray):
-    """Saves the embeddings matrix to .cpnlookup/faiss.index."""
+def save_faiss_index(embeddings):
+    """Lazy imports faiss and numpy to save the index."""
+    import faiss
+    import numpy as np
+    
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
     index.add(embeddings.astype('float32'))
@@ -76,8 +71,16 @@ def save_faiss_index(embeddings: np.ndarray):
     faiss.write_index(index, str(index_path))
 
 def load_faiss_index():
-    """Loads the FAISS index from the local project folder."""
+    """Lazy imports faiss to load the index."""
+    import faiss
     index_path = Path.cwd() / ".cpnlookup" / "faiss.index"
     if not index_path.exists():
         return None
     return faiss.read_index(str(index_path))
+
+def clear_local_index() -> bool:
+    local_dir = Path.cwd() / ".cpnlookup"
+    if local_dir.exists():
+        shutil.rmtree(local_dir)
+        return True
+    return False
