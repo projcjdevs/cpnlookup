@@ -1,13 +1,13 @@
-from sentence_transformers import SentenceTransformer
 from cpnlookup.utils.config import get_global_dir
 
 def get_model():
-    """Loads/Downloads the all-MiniLM-L6-v2 model locally."""
+    """Lazy loads the transformer model."""
+    from sentence_transformers import SentenceTransformer
     global_models = get_global_dir() / "models"
     return SentenceTransformer('all-MiniLM-L6-v2', cache_folder=str(global_models))
 
 def embed_chunks(chunks: list):
-    """Converts code chunks into a matrix of embeddings using batched processing."""
+    """Batched encoding logic."""
     model = get_model()
     
     texts = [
@@ -15,7 +15,6 @@ def embed_chunks(chunks: list):
         for c in chunks
     ]
     
-    # V2: Batched encoding
     embeddings = model.encode(
         texts, 
         batch_size=32, 

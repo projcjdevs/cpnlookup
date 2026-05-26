@@ -1,7 +1,7 @@
 # cpnlookup
 
 <p>
-  <img src="https://img.shields.io/badge/version-1.0.0-562bc2?style=flat-square" alt="Version 1.0.0"/>
+  <img src="https://img.shields.io/badge/version-1.0.0-562bc2?style=flat-square" alt="Version 1.2.1"/>
   <img src="https://img.shields.io/badge/python-3.9+-3572a5?style=flat-square" alt="Python 3.9+"/>
   <img src="https://img.shields.io/badge/license-MIT-2d9e75?style=flat-square" alt="MIT License"/>
   <img src="https://img.shields.io/badge/status-work%20in%20progress-b45309?style=flat-square" alt="Work in Progress"/>
