@@ -146,13 +146,19 @@ def init(repo_name: str):
             conn.commit(); conn.close()
 
             conn = sqlite3.connect(db_path); cursor = conn.cursor()
-            cursor.execute("SELECT name, file_path, chunk_type, docstring FROM chunks")
+            cursor.execute("SELECT id, name, file_path, chunk_type, docstring, source_code FROM chunks")
             rows = cursor.fetchall(); conn.close()
             if rows:
                 from cpnlookup.indexer.embedder import embed_chunks
                 from cpnlookup.indexer.storage import save_faiss_index
-                embeddings = embed_chunks([{"name": r[0], "file_path": r[1], "chunk_type": r[2], "docstring": r[3]} for r in rows])
+                embeddings = embed_chunks([{"name": r[1], "file_path": r[2], "chunk_type": r[3], "docstring": r[4], "source_code": r[5]} for r in rows])
                 save_faiss_index(embeddings)
+
+                conn = sqlite3.connect(db_path); cursor = conn.cursor()
+                for faiss_pos, row in enumerate(rows):
+                    cursor.execute("UPDATE chunks SET faiss_id = ? WHERE id = ?", (faiss_pos, row[0]))
+                conn.commit(); conn.close()
+
                 update_registry(os.getcwd(), repo_name, add=True)
             console.print(f"[bold green]✓[/] Successfully indexed {chunk_count} logic/doc units.")
         except Exception as e: console.print(f"[red]Error:[/] {e}")
@@ -170,7 +176,7 @@ def ask(question: str):
         conn = sqlite3.connect(db_path); cursor = conn.cursor()
         context, seen = [], set()
         for idx in relevant_ids:
-            cursor.execute("SELECT id, name, file_path, source_code FROM chunks WHERE id = ?", (idx + 1,))
+            cursor.execute("SELECT id, name, file_path, source_code FROM chunks WHERE faiss_id = ?", (idx,))
             row = cursor.fetchone()
             if row:
                 c_id, name, path, code = row
@@ -180,7 +186,18 @@ def ask(question: str):
                     if n_name not in seen:
                         cursor.execute("SELECT file_path, source_code FROM chunks WHERE name = ?", (n_name,))
                         n_row = cursor.fetchone()
-                        if n_row: context.append(f"--- NEIGHBOR: {n_row[0]} | {n_name} ---\n{n_row[1]}"); seen.add(n_name)
+                        if n_row: context.append(f"--- NEIGHBOR (callee): {n_row[0]} | {n_name} ---\n{n_row[1]}"); seen.add(n_name)
+
+                cursor.execute("""
+                    SELECT gn.chunk_id FROM graph_edges ge
+                    JOIN graph_nodes gn ON ge.source_id = gn.id
+                    WHERE ge.target_name = (SELECT name FROM chunks WHERE id = ?)
+                """, (c_id,))
+                for (caller_chunk_id,) in cursor.fetchall():
+                    cursor.execute("SELECT name, file_path, source_code FROM chunks WHERE id = ?", (caller_chunk_id,))
+                    caller = cursor.fetchone()
+                    if caller and caller[0] not in seen:
+                        context.append(f"--- NEIGHBOR (caller): {caller[1]} | {caller[0]} ---\n{caller[2]}"); seen.add(caller[0])
         conn.close()
         answer = chat_with_ollama(f"Context:\n" + "\n\n".join(context) + f"\n\nQuestion: {question}", model=model)
     console.print(f"\n[bold magenta]Q:[/] {question}\n" + "-"*30 + f"\n{answer}")
