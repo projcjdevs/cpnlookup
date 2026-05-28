@@ -12,7 +12,7 @@ def init_db() -> None:
     db_path = get_local_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS raw_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,9 +33,15 @@ def init_db() -> None:
             chunk_type TEXT,
             source_code TEXT,
             docstring TEXT,
-            embedding BLOB
+            embedding BLOB,
+            faiss_id INTEGER
         )
     """)
+
+    try:
+        cursor.execute("ALTER TABLE chunks ADD COLUMN faiss_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS graph_nodes (
@@ -54,7 +60,7 @@ def init_db() -> None:
             edge_type TEXT NOT NULL
         )
     """)
-    
+
     conn.commit()
     conn.close()
 
@@ -62,11 +68,11 @@ def save_faiss_index(embeddings):
     """Lazy imports faiss and numpy to save the index."""
     import faiss
     import numpy as np
-    
+
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
     index.add(embeddings.astype('float32'))
-    
+
     index_path = Path.cwd() / ".cpnlookup" / "faiss.index"
     faiss.write_index(index, str(index_path))
 
