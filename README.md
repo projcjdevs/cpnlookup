@@ -1,15 +1,27 @@
 # cpnlookup
 
 <p>
-  <img src="https://img.shields.io/badge/version-1.0.0-562bc2?style=flat-square" alt="Version 1.2.2"/>
+  <img src="https://img.shields.io/badge/version-2.0.0-562bc2?style=flat-square" alt="Version 2.0.0"/>
+  <img src="https://img.shields.io/badge/codename-Forge-7c3aed?style=flat-square" alt="Forge"/>
   <img src="https://img.shields.io/badge/python-3.9+-3572a5?style=flat-square" alt="Python 3.9+"/>
   <img src="https://img.shields.io/badge/license-MIT-2d9e75?style=flat-square" alt="MIT License"/>
   <img src="https://img.shields.io/badge/status-work%20in%20progress-b45309?style=flat-square" alt="Work in Progress"/>
 </p>
 
-**cpnlookup** is a local-first AI engineering tool for indexing and querying GitHub repositories without cloning them. It combines vector similarity search with static call graph analysis to deliver a Hybrid RAG pipeline that understands both the semantic meaning and structural relationships of a codebase — entirely on your own machine.
+```
+██████╗██████╗ ███╗   ██╗██╗      ██████╗  ██████╗ ██╗  ██╗██╗   ██╗██████╗
+██╔════╝██╔══██╗████╗  ██║██║     ██╔═══██╗██╔═══██╗██║ ██╔╝██║   ██║██╔══██╗
+██║     ██████╔╝██╔██╗ ██║██║     ██║   ██║██║   ██║█████╔╝ ██║   ██║██████╔╝
+██║     ██╔═══╝ ██║╚██╗██║██║     ██║   ██║██║   ██║██╔═██╗ ██║   ██║██╔═══╝
+╚██████╗██║     ██║ ╚████║███████╗╚██████╔╝╚██████╔╝██║  ██╗╚██████╔╝██║
+ ╚═════╝╚═╝     ╚═╝  ╚═══╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝
+```
 
-> This project is under active development. Version 1.0 is a functional proof-of-concept with known architectural limitations documented below.
+*Forged for faster indexing and smarter retrieval.*
+
+**cpnlookup** is a local-first CLI tool for indexing and querying GitHub repositories through natural language — without ever running `git clone`. It combines FAISS vector similarity search with a SQLite-backed static call graph to deliver a Hybrid RAG pipeline that understands both the semantic meaning and structural relationships of a codebase, entirely on your own machine.
+
+> This project is under active development. See [Known Limitations](#known-limitations) and [Roadmap](#roadmap) for current status.
 
 ---
 
@@ -19,9 +31,13 @@
 
 **Logic-aware chunking** — Uses Python's `ast` module to parse source files into meaningful units (functions and classes) rather than splitting on arbitrary character counts or line boundaries.
 
-**Static call graph construction** — Performs static analysis to identify function invocations and stores a directed call graph in SQLite. This graph is used at query time to expand retrieval context with structurally adjacent code.
+**Static call graph construction** — Performs static analysis to identify function invocations and stores a directed call graph in SQLite. Used at query time to expand retrieval context with structurally adjacent code.
 
-**Hybrid RAG retrieval** — Combines FAISS vector similarity search with call graph traversal. Top-k vector matches are retrieved first, then their graph neighbours are included to provide the LLM with architectural context beyond what semantic similarity alone would surface.
+**Hybrid RAG retrieval** — Combines FAISS vector similarity search with bidirectional call graph traversal. Top-k vector matches are retrieved first, then both their callees and callers are included to give the LLM full architectural context.
+
+**Incremental indexing** — File content is hashed on index. Re-indexing only fetches, chunks, and embeds files that have actually changed. Unchanged files reuse their stored embedding vectors.
+
+**Write consistency** — An `index_status` flag is written to SQLite at the start of every indexing run and cleared only on clean completion. Interrupted runs are detected and reported on next use.
 
 **Local inference** — All inference is handled by a locally running Ollama instance (default: Mistral). No source code, queries, or embeddings leave your machine.
 
@@ -32,27 +48,33 @@
 ## Architecture
 
 ```
-GitHub API  (file tree + raw content)
+GitHub API  (file tree + SHAs — one call)
     |
     v
+Change detection  (compare SHAs against stored file_hash in SQLite)
+    |
+    |-- Unchanged files  -->  reuse stored embedding BLOBs
+    |-- New / changed    -->  fetch content  -->  chunk  -->  embed
+    v
 AST / Regex Chunker
-    |-- Python  --> ast module       --> function / class chunks
-    |-- Markdown --> regex headers   --> section chunks
+    |-- Python   -->  ast module       -->  function / class chunks
+    |-- Markdown -->  regex headers    -->  section chunks
     v
 Embedding Model  (sentence-transformers/all-MiniLM-L6-v2)
     |
-    +---> FAISS index          (faiss.index)
-    +---> Static call graph    (SQLite: index.db / graph_edges)
+    +---> Embedding BLOBs stored in SQLite  (chunks.embedding)
+    +---> FAISS index rebuilt from all BLOBs  (faiss.index)
+    +---> Static call graph  (SQLite: graph_nodes, graph_edges)
     |
     v
 Query pipeline
-    |-- Vector search   (top-k FAISS matches)
-    |-- Graph traversal (caller / callee expansion)
+    |-- Vector search    (top-k FAISS matches via faiss_id)
+    |-- Graph traversal  (callers + callees, bidirectional)
     v
 Local LLM via Ollama  -->  Response
 ```
 
-Each indexed repository produces a `.cpnlookup/` directory containing `index.db` and `faiss.index`. A global registry file tracks all indexes on the local system. The CLI is built with `click` and `rich`.
+Each indexed repository produces a `.cpnlookup/` directory containing `index.db` and `faiss.index`. A global registry at `~/.cpnlookup/registry.json` tracks all indexes on the local system.
 
 ---
 
@@ -63,14 +85,6 @@ Each indexed repository produces a `.cpnlookup/` directory containing `index.db`
 ```bash
 ollama pull mistral
 pip install cpnlookup
-```
-
-> The `pyproject.toml` dependency declaration is being completed as part of the V1 stabilisation pass. If the PyPI install is incomplete, install dependencies directly:
-> ```bash
-> pip install click rich requests sentence-transformers faiss-cpu numpy
-> ```
-
-```bash
 lookup auth <your_github_token>
 ```
 
@@ -79,11 +93,15 @@ lookup auth <your_github_token>
 ## Usage
 
 ```bash
+lookup                             # Welcome screen and quick start
+lookup desc                        # Project info, version history, acknowledgements
 lookup profile <username>          # Browse a user's repositories
-lookup init <username>/<repo>      # Index a repository (fetch, chunk, embed, graph)
+lookup init <username>/<repo>      # Index a repository
 lookup ask "How does X work?"      # Query the codebase in natural language
-lookup indexed                     # List all locally indexed repositories
 lookup functions                   # List all indexed functions and classes
+lookup indexed                     # List all locally indexed repositories
+lookup config <key> <value>        # Configure model or search depth
+lookup clone <username>/<repo>     # Git clone a repository
 lookup drop                        # Remove the local index for the current repository
 ```
 
@@ -91,48 +109,54 @@ lookup drop                        # Remove the local index for the current repo
 
 ## Known Limitations
 
-Version 1.0 is a proof-of-concept. The limitations below are understood, documented for transparency, and addressed in the roadmap.
+The following limitations are understood, documented for transparency, and tracked in the roadmap.
 
-**Call graph accuracy.** The call graph is built via name-only static analysis. When a call to `process()` is detected, an edge is recorded to any indexed function named `process` regardless of module or class. Codebases with common function names will produce false edges. Dynamic dispatch patterns — `getattr`, decorator-wrapped functions, factory patterns — are invisible to this analysis. The graph is a useful structural approximation, not a semantically precise call graph.
+**Call graph accuracy.** The call graph is built via name-only static analysis. When a call to `process()` is detected, an edge is recorded to any indexed function named `process` regardless of module or class. Codebases with common function names will produce false edges. Dynamic dispatch — `getattr`, decorator-wrapped functions, factory patterns — is invisible to this analysis. The graph is a useful structural approximation, not a semantically precise call graph.
 
-**Language support.** V1 supports Python and Markdown only. All other file types are skipped during indexing.
+**Language support.** Only Python source files and Markdown documentation are supported. All other file types are skipped during indexing. Multi-language support via Tree-sitter is planned for V3.
 
-**Cold-start latency.** Each CLI command cold-loads the embedding model from disk, adding approximately 8–12 seconds of latency per command. This is a model loading cost, not a retrieval cost.
+**Cold-start latency.** Commands that invoke the embedding model still carry a load cost on first use per session. Lazy imports (shipped in v1.2.2) eliminated startup lag for non-model commands; a persistent model daemon to eliminate the remaining load cost is planned for a future v2.x release.
 
-**No incremental indexing.** Re-indexing performs a full fetch and re-embedding of all files. There is no change detection mechanism. For actively developed repositories this is a significant friction point.
-
-**SQLite and FAISS consistency.** The two stores are written in separate operations with no shared transaction boundary. An interrupted indexing run can produce a permanently inconsistent state that requires a full re-index to recover.
-
-**FAISS scalability.** `IndexFlatL2` performs exhaustive linear search and degrades on repositories producing more than roughly 10,000 indexed chunks.
+**FAISS scalability.** `IndexFlatL2` performs exhaustive linear search. For repositories producing more than roughly 10,000 indexed chunks, query latency will degrade. Migration to `IndexIVFFlat` is planned for V3.
 
 ---
 
 ## Roadmap
 
-Items marked `[new]` were identified during architectural review and are not in the original plan.
+### Version 2.0 — Forge ✦ *current*
 
-### Version 2.0 — Performance and Reliability
-
-| Item | Description |
-|---|---|
-| Persistent model process | Background socket server keeps the embedding model warm between commands, eliminating cold-start latency. |
-| Batched embedding | Replace per-chunk `model.encode()` calls with batched encoding — O(n) passes become one vectorised operation. |
-| Incremental indexing `[new]` | Store a content hash per file in SQLite. On re-index, only changed files are re-processed. The highest-impact UX improvement in this cycle. |
-| Pre-index filtering | Skip build artifacts, compiled output, and auto-generated files. Test files are intentionally retained as executable documentation. |
-| Write consistency `[new]` | Two-phase commit pattern for SQLite and FAISS writes with a recoverable state flag to handle interrupted indexing runs. |
+| Item | Status | Description |
+|---|---|---|
+| Write consistency | ✅ Shipped | `index_status` flag prevents corrupt index state on interrupted runs. |
+| Incremental indexing | ✅ Shipped | SHA-based change detection. Only new or changed files are re-fetched, re-chunked, and re-embedded. Embedding BLOBs stored in SQLite for reuse. |
+| Batched embedding | ✅ Shipped | All chunks encoded in a single batched `model.encode()` call. |
+| Pre-index filtering | ✅ Shipped | Build artifacts, compiled output, and cache directories excluded. Test files retained. |
+| Bidirectional graph traversal | ✅ Shipped | Callers and callees both included in context expansion. |
+| Persistent model daemon | ⏳ Planned | Background process keeps embedding model warm between commands, eliminating remaining cold-start cost. |
 
 ### Version 3.0 — Intelligence and Scalability
 
 | Item | Description |
 |---|---|
-| Tree-sitter parser | Replace `ast`-based chunking with Tree-sitter for multi-language support (JS, TS, Rust, Go, C++). Name-only resolution remains a limitation; full semantic accuracy requires language server integration, planned for a later cycle. |
-| BM25 sparse retrieval `[new]` | Keyword-based retrieval pass alongside FAISS dense search. BM25 outperforms dense retrieval on exact symbol name queries; results are merged before context assembly. |
-| Cross-encoder reranking `[new]` | Apply a cross-encoder (e.g., `cross-encoder/ms-marco-MiniLM-L-6-v2`) to the candidate set after hybrid retrieval. Scores each chunk against the query jointly, filtering low-relevance context before it reaches the LLM. |
-| FAISS scalability upgrade `[new]` | Migrate from `IndexFlatL2` to `IndexIVFFlat` with product quantization for repositories exceeding ~10,000 chunks. |
-| Hierarchical indexing depth | User-selectable modes: "focused" (main source files, faster) and "comprehensive" (full repository context, slower). |
-| Conversation memory | Persist and index chat history across sessions. Older turns are summarised rather than retained verbatim to avoid context window bloat. |
-| Mermaid.js visualisation | Generate visual call graph diagrams from `graph_edges` data, renderable in any Mermaid-compatible viewer. |
-| Local LLM upgrade | Evaluate `qwen2.5-coder` as an alternative default. Code-specialised models consistently outperform general-purpose models on comprehension and synthesis tasks at equivalent parameter counts. |
+| Tree-sitter parser | Multi-language support — JS, TS, Rust, Go, C++. Replaces `ast`-based chunking. |
+| BM25 sparse retrieval | Keyword-based retrieval pass merged with FAISS dense search. Improves recall on exact symbol name queries. |
+| Cross-encoder reranking | Post-retrieval scoring of each candidate chunk against the query jointly. Filters low-relevance context before it reaches the LLM. |
+| FAISS scalability upgrade | Migrate from `IndexFlatL2` to `IndexIVFFlat` with product quantization for large repositories. |
+| Hierarchical indexing depth | User-selectable modes: "focused" (main files, faster) and "comprehensive" (full context, slower). |
+| Conversation memory | Persistent, indexed chat history across sessions. Older turns summarised to avoid context window bloat. |
+| Mermaid.js visualisation | Visual call graph diagrams generated from `graph_edges` data. |
+| Local LLM upgrade | Evaluate `qwen2.5-coder` as an alternative default for improved code comprehension. |
+
+---
+
+## Version History
+
+| Version | Codename | Highlights |
+|---|---|---|
+| v1.0.0 | — | Initial release. Hybrid RAG pipeline, GitHub API indexing, AST chunking, FAISS search, Ollama inference. |
+| v1.1.1 | Optimized Indexing | Pre-index filtering, batched embedding, corrected runtime dependency declarations. |
+| v1.2.2 | Lazy Imports | Heavy ML imports moved inside command functions. Non-model commands start instantly. |
+| v2.0.0 | Forge | Write consistency, incremental indexing, embedding BLOB storage, bidirectional graph traversal, `faiss_id` mapping. |
 
 ---
 
@@ -142,4 +166,7 @@ No source code, query text, or generated embeddings are transmitted to any exter
 
 ---
 
-*Developed by [@projcjdevs](https://github.com/projcjdevs)*
+## Acknowledgements
+
+Developed by [@projcjdevs](https://github.com/projcjdevs).
+Special thanks to [@2nieGarcia](https://github.com/2nieGarcia), [@renzv-compsci](https://github.com/renzv-compsci), and [@NIghtIngale340](https://github.com/NIghtIngale340) for feedback and testing.
