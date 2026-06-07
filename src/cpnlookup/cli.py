@@ -1,24 +1,25 @@
 import os
 import click
 import sqlite3
-import json
 import subprocess
+import numpy as np
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-# Environment Setup
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ["T_PGBAR"] = "0" 
+os.environ["T_PGBAR"] = "0"
 console = Console()
 
-# Light Utility Imports
 from cpnlookup.utils.config import save_github_token, get_local_config, save_local_config, update_registry, get_registry
 from cpnlookup.github.client import get_user_repos
-from cpnlookup.github.fetcher import fetch_repo_files
-from cpnlookup.indexer.storage import init_db, clear_local_index, get_local_db_path
+from cpnlookup.github.fetcher import fetch_repo_tree, fetch_file_contents
+from cpnlookup.indexer.storage import (init_db, clear_local_index, get_local_db_path,
+                                        set_index_status, get_index_status,
+                                        load_file_hashes, delete_file_data,
+                                        save_faiss_index)
 from cpnlookup.llm.ollama import check_ollama, chat_with_ollama
 
 def print_welcome_screen():
@@ -28,7 +29,8 @@ def print_welcome_screen():
 ██║     ██████╔╝██╔██╗ ██║██║     ██║   ██║██║   ██║█████╔╝ ██║   ██║██████╔╝
 ██║     ██╔═══╝ ██║╚██╗██║██║     ██║   ██║██║   ██║██╔═██╗ ██║   ██║██╔═══╝ 
 ╚██████╗██║     ██║ ╚████║███████╗╚██████╔╝╚██████╔╝██║  ██╗╚██████╔╝██║     
- ╚═════╝╚═╝     ╚═╝  ╚═══╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝     
+ ╚═════╝╚═╝     ╚═╝  ╚═══╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝   
+ v2.0.0 - Forge: Consistent, Incremental, Reliable Indexing | by @projcjdevs  
     """
     console.print(f"[bold magenta]{header}[/]")
     ollama_status = "[bold green]Running[/]" if check_ollama() else "[bold red]Not Found (Required for 'ask')[/]"
@@ -41,6 +43,7 @@ def print_welcome_screen():
 [bold cyan]Ollama Service:[/] {ollama_status}
 [dim]Type [bold white]lookup help[/] for a detailed setup guide.[/]
 [dim]Type [bold white]lookup commands[/] to see all available features.[/]  
+[dim]Type [bold white]lookup desc[/] to see complete description of cpnlookup.[/] 
     """
     console.print(Panel(setup_info, border_style="magenta", box=box.ROUNDED))
 
@@ -68,6 +71,7 @@ def help():
     )
     cmd_table = Table(box=box.SIMPLE, header_style="bold cyan")
     cmd_table.add_column("Command"); cmd_table.add_column("Purpose")
+    cmd_table.add_row("desc", "Project info and version history")
     cmd_table.add_row("init", "Index a repo (Calculates Vectors + Graph)")
     cmd_table.add_row("ask", "Chat with the indexed codebase locally")
     cmd_table.add_row("indexed", "List all local indexes on this machine")
@@ -80,12 +84,65 @@ def commands():
     """List all available commands in a structured grid."""
     table = Table(title="Available Commands", box=box.ROUNDED, header_style="bold magenta")
     table.add_column("Command", style="cyan"); table.add_column("Description", style="white")
-    cmds = [("auth", "Save GitHub Token"), ("profile", "List user repos"), ("init", "Index repository"), 
+    cmds = [("auth", "Save GitHub Token"), ("profile", "List user repos"), ("init", "Index repository"),
             ("functions", "List code logic"), ("ask", "Hybrid RAG Query"),
             ("indexed", "Global registry"), ("config", "Set model/top_k"),
             ("clone", "Git clone repo"), ("drop", "Delete local index")]
     for c, d in cmds: table.add_row(c, d)
     console.print(table)
+
+@cli.command()
+def desc():
+    """Project description, version history, and acknowledgements."""
+    from rich.text import Text
+
+    about = Panel(
+        "[white]cpnlookup[/] is a local-first CLI tool for indexing and querying GitHub\n"
+        "repositories through natural language — without ever running [green]git clone[/].\n\n"
+        "It combines [bold cyan]FAISS vector similarity search[/] with a [bold cyan]SQLite-backed\n"
+        "static call graph[/] to form a [bold magenta]Hybrid RAG pipeline[/] that understands\n"
+        "both the [italic]meaning[/] and [italic]structure[/] of a codebase. All inference runs\n"
+        "locally via [bold]Ollama[/]. No code, queries, or embeddings leave your machine.",
+        title="[bold white]What is cpnlookup?[/]",
+        border_style="magenta", box=box.ROUNDED
+    )
+
+    log_table = Table(box=box.SIMPLE, header_style="bold cyan", show_edge=False)
+    log_table.add_column("Version", style="bold magenta", no_wrap=True)
+    log_table.add_column("Name", style="bold white", no_wrap=True)
+    log_table.add_column("Changes", style="dim white")
+    log_table.add_row("v1.0.0", "Initial Release",
+                      "Core Hybrid RAG pipeline. GitHub API indexing, AST chunking,\n"
+                      "FAISS vector search, SQLite call graph, Ollama inference.")
+    log_table.add_row("v1.1.1", "Optimized Indexing",
+                      "Pre-index filtering (skip build artifacts, keep tests).\n"
+                      "Batched embedding. Fixed missing runtime deps in pyproject.toml.")
+    log_table.add_row("v1.2.2", "Lazy Imports",
+                      "Heavy ML imports moved inside command functions.\n"
+                      "Commands that don't need the model now start instantly.")
+    log_table.add_row("v2.0.0", "Forge",
+                      "Write consistency — index_status flag prevents corrupt state.\n"
+                      "Incremental indexing — only changed files are re-fetched,\n"
+                      "re-chunked, and re-embedded. Embedding BLOBs stored in SQLite.\n"
+                      "Bidirectional graph traversal (callers + callees). faiss_id\n"
+                      "column decouples FAISS positions from SQLite auto-increment IDs.")
+    version_panel = Panel(log_table, title="[bold white]Version History[/]",
+                          border_style="cyan", box=box.ROUNDED)
+
+    ack_text = (
+        "[bold white]Developer[/]\n"
+        "  [bold magenta]@projcjdevs[/] — architecture, implementation, and maintenance\n\n"
+        "[bold white]Special Thanks[/]\n"
+        "  [bold cyan]@2nieGarcia[/]       — feedback and testing\n"
+        "  [bold cyan]@renzv-compsci[/]    — feedback and testing\n"
+        "  [bold cyan]@NIghtIngale340[/]   — feedback and testing"
+    )
+    ack_panel = Panel(ack_text, title="[bold white]Acknowledgements[/]",
+                      border_style="green", box=box.ROUNDED)
+
+    console.print(about)
+    console.print(version_panel)
+    console.print(ack_panel)
 
 @cli.command()
 @click.argument('token')
@@ -112,56 +169,112 @@ def profile(username: str, scope: str):
 @click.argument('repo_name')
 def init(repo_name: str):
     from cpnlookup.indexer.chunker import chunk_python_code, chunk_markdown
+    from cpnlookup.indexer.embedder import embed_chunks
+
     console.print(f"[bold cyan]Initializing {repo_name}...[/]")
     init_db()
-    with console.status("[bold yellow]Downloading and Analyzing..."):
+    set_index_status('pending')
+
+    with console.status("[bold yellow]Analyzing repository..."):
         try:
-            files = fetch_repo_files(repo_name)
             db_path = get_local_db_path()
-            conn = sqlite3.connect(db_path); cursor = conn.cursor()
-            for f in files:
-                lang = 'python' if f['path'].endswith('.py') else 'markdown'
-                cursor.execute("INSERT OR IGNORE INTO raw_files (file_path, language, content, size_bytes) VALUES (?, ?, ?, ?)", (f['path'], lang, f['content'], f['size']))
-            
-            chunk_count = 0
-            for f in files:
-                chunks = []
-                if f['path'].endswith('.py'): chunks = chunk_python_code(f['path'], f['content'])
-                elif f['path'].lower().endswith('.md'): chunks = chunk_markdown(f['path'], f['content'])
-                for c in chunks:
-                    cursor.execute("INSERT INTO chunks (name, file_path, line_start, line_end, chunk_type, source_code, docstring) VALUES (?, ?, ?, ?, ?, ?, ?)", (c['name'], c['file_path'], c['line_start'], c['line_end'], c['chunk_type'], c['source_code'], c['docstring']))
-                    chunk_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO graph_nodes (chunk_id, name, file_path) VALUES (?, ?, ?)", (chunk_id, c['name'], c['file_path']))
-                    chunk_count += 1
+            tree = fetch_repo_tree(repo_name)       
+            paths_in_repo = {f['path'] for f in tree}
 
-            cursor.execute("SELECT id, name FROM graph_nodes")
-            nodes = cursor.fetchall(); all_names = {n[1] for n in nodes}
-            for node_id, node_name in nodes:
-                cursor.execute("SELECT source_code, chunk_type FROM chunks WHERE name = ?", (node_name,))
-                res = cursor.fetchone()
-                if not res or res[1] == 'documentation': continue
-                for target in all_names:
-                    if target != node_name and f"{target}(" in res[0]:
-                        cursor.execute("INSERT INTO graph_edges (source_id, target_name, edge_type) VALUES (?, ?, ?)", (node_id, target, "calls"))
-            conn.commit(); conn.close()
+            existing_hashes = load_file_hashes()      
+            to_fetch  = [f for f in tree if existing_hashes.get(f['path']) != f['sha']]
+            to_delete = [p for p in existing_hashes if p not in paths_in_repo]
+
+            faiss_exists = (Path.cwd() / ".cpnlookup" / "faiss.index").exists()
+            if not to_fetch and not to_delete and faiss_exists:
+                set_index_status('complete')
+                console.print("[bold green]✓[/] Index is already up to date."); return
+
+            is_fresh = not existing_hashes 
+
+            if to_delete or to_fetch:
+                conn = sqlite3.connect(db_path); cursor = conn.cursor()
+                for path in to_delete + [f['path'] for f in to_fetch]:
+                    delete_file_data(cursor, path)
+                conn.commit(); conn.close()
+
+            new_files = fetch_file_contents(repo_name, to_fetch)
+
+            if new_files:
+                conn = sqlite3.connect(db_path); cursor = conn.cursor()
+                new_chunks_map = {}  
+                for f in new_files:
+                    lang = 'python' if f['path'].endswith('.py') else 'markdown'
+                    cursor.execute("INSERT OR REPLACE INTO raw_files (file_path, language, content, size_bytes, file_hash) VALUES (?, ?, ?, ?, ?)",
+                                   (f['path'], lang, f['content'], f['size'], f['sha']))
+                    chunks = []
+                    if f['path'].endswith('.py'): chunks = chunk_python_code(f['path'], f['content'])
+                    elif f['path'].lower().endswith('.md'): chunks = chunk_markdown(f['path'], f['content'])
+                    new_chunks_map[f['path']] = chunks
+                    for c in chunks:
+                        cursor.execute("INSERT INTO chunks (name, file_path, line_start, line_end, chunk_type, source_code, docstring) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                       (c['name'], c['file_path'], c['line_start'], c['line_end'], c['chunk_type'], c['source_code'], c['docstring']))
+                        cursor.execute("INSERT INTO graph_nodes (chunk_id, name, file_path) VALUES (?, ?, ?)",
+                                       (cursor.lastrowid, c['name'], c['file_path']))
+                conn.commit()
+
+                cursor.execute("SELECT id, name FROM graph_nodes")
+                all_nodes = cursor.fetchall(); all_names = {n[1] for n in all_nodes}
+                for file_path, chunks in new_chunks_map.items():
+                    for c in chunks:
+                        if c['chunk_type'] == 'documentation': continue
+                        cursor.execute("SELECT id FROM graph_nodes WHERE name = ? AND file_path = ?", (c['name'], c['file_path']))
+                        node_row = cursor.fetchone()
+                        if not node_row: continue
+                        for target in all_names:
+                            if target != c['name'] and f"{target}(" in c['source_code']:
+                                cursor.execute("INSERT INTO graph_edges (source_id, target_name, edge_type) VALUES (?, ?, ?)",
+                                               (node_row[0], target, "calls"))
+                conn.commit(); conn.close()
 
             conn = sqlite3.connect(db_path); cursor = conn.cursor()
-            cursor.execute("SELECT id, name, file_path, chunk_type, docstring, source_code FROM chunks")
-            rows = cursor.fetchall(); conn.close()
-            if rows:
-                from cpnlookup.indexer.embedder import embed_chunks
-                from cpnlookup.indexer.storage import save_faiss_index
-                embeddings = embed_chunks([{"name": r[1], "file_path": r[2], "chunk_type": r[3], "docstring": r[4], "source_code": r[5]} for r in rows])
-                save_faiss_index(embeddings)
+            cursor.execute("SELECT id, name, file_path, chunk_type, docstring, source_code, embedding FROM chunks ORDER BY id")
+            all_rows = cursor.fetchall(); conn.close()
+
+            if all_rows:
+                new_file_paths = {f['path'] for f in to_fetch}
+
+                needs_embed = [(r[0], {"name": r[1], "file_path": r[2], "chunk_type": r[3],
+                                        "docstring": r[4], "source_code": r[5]})
+                               for r in all_rows if r[2] in new_file_paths or r[6] is None]
+
+                if needs_embed:
+                    ids, dicts = zip(*needs_embed)
+                    computed = embed_chunks(list(dicts))
+                    conn = sqlite3.connect(db_path); cursor = conn.cursor()
+                    for chunk_id, emb in zip(ids, computed):
+                        cursor.execute("UPDATE chunks SET embedding = ? WHERE id = ?",
+                                       (emb.astype(np.float32).tobytes(), chunk_id))
+                    conn.commit(); conn.close()
 
                 conn = sqlite3.connect(db_path); cursor = conn.cursor()
-                for faiss_pos, row in enumerate(rows):
+                cursor.execute("SELECT id, embedding FROM chunks ORDER BY id")
+                embed_rows = cursor.fetchall(); conn.close()
+
+                all_embeddings = np.array([np.frombuffer(r[1], dtype=np.float32) for r in embed_rows])
+                save_faiss_index(all_embeddings)
+                conn = sqlite3.connect(db_path); cursor = conn.cursor()
+                for faiss_pos, row in enumerate(embed_rows):
                     cursor.execute("UPDATE chunks SET faiss_id = ? WHERE id = ?", (faiss_pos, row[0]))
                 conn.commit(); conn.close()
 
                 update_registry(os.getcwd(), repo_name, add=True)
-            console.print(f"[bold green]✓[/] Successfully indexed {chunk_count} logic/doc units.")
-        except Exception as e: console.print(f"[red]Error:[/] {e}")
+
+            set_index_status('complete')
+
+            total = len(all_rows) if all_rows else 0
+            if is_fresh:
+                console.print(f"[bold green]✓[/] Indexed {total} logic/doc units.")
+            else:
+                console.print(f"[bold green]✓[/] Re-indexed: {len(to_fetch)} changed, {len(to_delete)} removed, {total} total chunks.")
+
+        except Exception as e:
+            console.print(f"[red]Error:[/] {e}")
 
 @cli.command()
 @click.argument('question')
@@ -169,6 +282,8 @@ def ask(question: str):
     from cpnlookup.retrieval.vector_search import search_chunks
     db_path = get_local_db_path()
     if not db_path.exists(): console.print("[red]No index found.[/]"); return
+    if get_index_status() == 'pending':
+        console.print("[yellow]Index is incomplete (interrupted indexing detected). Run [bold]lookup init[/] again.[/]"); return
     if not check_ollama(): console.print("[red]Ollama not running.[/]"); return
     cfg = get_local_config(); model = cfg.get("model", "mistral"); top_k = cfg.get("top_k", 5)
     with console.status(f"[cyan]Querying {model}..."):
@@ -187,7 +302,6 @@ def ask(question: str):
                         cursor.execute("SELECT file_path, source_code FROM chunks WHERE name = ?", (n_name,))
                         n_row = cursor.fetchone()
                         if n_row: context.append(f"--- NEIGHBOR (callee): {n_row[0]} | {n_name} ---\n{n_row[1]}"); seen.add(n_name)
-
                 cursor.execute("""
                     SELECT gn.chunk_id FROM graph_edges ge
                     JOIN graph_nodes gn ON ge.source_id = gn.id
@@ -206,6 +320,8 @@ def ask(question: str):
 def functions():
     db_path = get_local_db_path()
     if not db_path.exists(): return
+    if get_index_status() == 'pending':
+        console.print("[yellow]Index is incomplete. Run [bold]lookup init[/] again.[/]"); return
     conn = sqlite3.connect(db_path); cursor = conn.cursor()
     cursor.execute("SELECT name, file_path, chunk_type FROM chunks ORDER BY file_path")
     rows = cursor.fetchall(); conn.close()
