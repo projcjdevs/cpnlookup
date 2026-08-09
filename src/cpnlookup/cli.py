@@ -30,7 +30,7 @@ def print_welcome_screen():
 ██║     ██╔═══╝ ██║╚██╗██║██║     ██║   ██║██║   ██║██╔═██╗ ██║   ██║██╔═══╝ 
 ╚██████╗██║     ██║ ╚████║███████╗╚██████╔╝╚██████╔╝██║  ██╗╚██████╔╝██║     
  ╚═════╝╚═╝     ╚═╝  ╚═══╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝   
- v2.0.0 - Forge: Consistent, Incremental, Reliable Indexing | by @projcjdevs  
+ v3.0.0 beta - Flux: Smarter retrieval. Deeper context. Persistent memory. | by @projcjdevs  
     """
     console.print(f"[bold magenta]{header}[/]")
     ollama_status = "[bold green]Running[/]" if check_ollama() else "[bold red]Not Found (Required for 'ask')[/]"
@@ -87,7 +87,9 @@ def commands():
     cmds = [("auth", "Save GitHub Token"), ("profile", "List user repos"), ("init", "Index repository"),
             ("functions", "List code logic"), ("ask", "Hybrid RAG Query"),
             ("indexed", "Global registry"), ("config", "Set model/top_k"),
-            ("clone", "Git clone repo"), ("drop", "Delete local index")]
+            ("clone", "Git clone repo"), ("drop", "Delete local index"),
+            ("history", "View conversation history"),
+            ("forget",  "Clear conversation memory"),]
     for c, d in cmds: table.add_row(c, d)
     console.print(table)
 
@@ -126,6 +128,11 @@ def desc():
                       "re-chunked, and re-embedded. Embedding BLOBs stored in SQLite.\n"
                       "Bidirectional graph traversal (callers + callees). faiss_id\n"
                       "column decouples FAISS positions from SQLite auto-increment IDs.")
+    log_table.add_row("v3.0.0-beta", "Flux",
+                      "Hybrid retrieval: BM25 sparse search merged with FAISS dense\n"
+                      "search. Cross-encoder reranking for precision. Conversation\n"
+                      "memory across sessions (per-repo SQLite). lookup history and\n"
+                      "lookup forget commands.")
     version_panel = Panel(log_table, title="[bold white]Version History[/]",
                           border_style="cyan", box=box.ROUNDED)
 
@@ -280,41 +287,144 @@ def init(repo_name: str):
 @click.argument('question')
 def ask(question: str):
     from cpnlookup.retrieval.vector_search import search_chunks
+    from cpnlookup.retrieval.hybrid import bm25_search, merge_results, rerank
+    from cpnlookup.retrieval.memory import get_recent_turns, save_turn
+ 
     db_path = get_local_db_path()
     if not db_path.exists(): console.print("[red]No index found.[/]"); return
     if get_index_status() == 'pending':
-        console.print("[yellow]Index is incomplete (interrupted indexing detected). Run [bold]lookup init[/] again.[/]"); return
+        console.print("[yellow]Index is incomplete. Run [bold]lookup init[/] again.[/]"); return
     if not check_ollama(): console.print("[red]Ollama not running.[/]"); return
-    cfg = get_local_config(); model = cfg.get("model", "mistral"); top_k = cfg.get("top_k", 5)
+ 
+    cfg = get_local_config()
+    model  = cfg.get("model", "mistral")
+    top_k  = cfg.get("top_k", 5)
+    reg = get_registry()
+    repo_name = reg.get(os.getcwd(), "unknown")
+ 
     with console.status(f"[cyan]Querying {model}..."):
-        relevant_ids = search_chunks(question, top_k=top_k)
+        conn = sqlite3.connect(db_path); cursor = conn.cursor()
+        cursor.execute(
+            "SELECT faiss_id, name, file_path, chunk_type, docstring, source_code FROM chunks ORDER BY faiss_id"
+        )
+        rows = cursor.fetchall(); conn.close()
+
+        all_chunks = [
+            {"faiss_id": r[0], "name": r[1], "file_path": r[2],
+             "chunk_type": r[3], "docstring": r[4], "source_code": r[5]}
+            for r in rows if r[0] is not None
+        ]
+        faiss_ids   = search_chunks(question, top_k=top_k * 2) 
+        bm25_hits   = bm25_search(question, all_chunks, top_k=top_k * 2)
+        candidates  = merge_results(faiss_ids, bm25_hits, all_chunks)
+        top_chunks  = rerank(question, candidates, top_k=top_k)
         conn = sqlite3.connect(db_path); cursor = conn.cursor()
         context, seen = [], set()
-        for idx in relevant_ids:
-            cursor.execute("SELECT id, name, file_path, source_code FROM chunks WHERE faiss_id = ?", (idx,))
-            row = cursor.fetchone()
-            if row:
-                c_id, name, path, code = row
-                if name not in seen: context.append(f"--- FILE: {path} | NODE: {name} ---\n{code}"); seen.add(name)
-                cursor.execute("SELECT target_name FROM graph_edges WHERE source_id = (SELECT id FROM graph_nodes WHERE chunk_id = ?)", (c_id,))
-                for (n_name,) in cursor.fetchall():
-                    if n_name not in seen:
-                        cursor.execute("SELECT file_path, source_code FROM chunks WHERE name = ?", (n_name,))
-                        n_row = cursor.fetchone()
-                        if n_row: context.append(f"--- NEIGHBOR (callee): {n_row[0]} | {n_name} ---\n{n_row[1]}"); seen.add(n_name)
-                cursor.execute("""
-                    SELECT gn.chunk_id FROM graph_edges ge
-                    JOIN graph_nodes gn ON ge.source_id = gn.id
-                    WHERE ge.target_name = (SELECT name FROM chunks WHERE id = ?)
-                """, (c_id,))
-                for (caller_chunk_id,) in cursor.fetchall():
-                    cursor.execute("SELECT name, file_path, source_code FROM chunks WHERE id = ?", (caller_chunk_id,))
-                    caller = cursor.fetchone()
-                    if caller and caller[0] not in seen:
-                        context.append(f"--- NEIGHBOR (caller): {caller[1]} | {caller[0]} ---\n{caller[2]}"); seen.add(caller[0])
+ 
+        for chunk in top_chunks:
+            name, path, code = chunk['name'], chunk['file_path'], chunk['source_code']
+            if name not in seen:
+                context.append(f"--- FILE: {path} | NODE: {name} ---\n{code}")
+                seen.add(name)
+            cursor.execute("SELECT id FROM chunks WHERE name = ? AND file_path = ?", (name, path))
+            id_row = cursor.fetchone()
+            if not id_row: continue
+            c_id = id_row[0]
+ 
+            cursor.execute(
+                "SELECT target_name FROM graph_edges "
+                "WHERE source_id = (SELECT id FROM graph_nodes WHERE chunk_id = ?)", (c_id,)
+            )
+            for (n_name,) in cursor.fetchall():
+                if n_name not in seen:
+                    cursor.execute("SELECT file_path, source_code FROM chunks WHERE name = ?", (n_name,))
+                    n_row = cursor.fetchone()
+                    if n_row:
+                        context.append(f"--- NEIGHBOR (callee): {n_row[0]} | {n_name} ---\n{n_row[1]}")
+                        seen.add(n_name)
+ 
+            cursor.execute("""
+                SELECT gn.chunk_id FROM graph_edges ge
+                JOIN graph_nodes gn ON ge.source_id = gn.id
+                WHERE ge.target_name = (SELECT name FROM chunks WHERE id = ?)
+            """, (c_id,))
+            for (caller_chunk_id,) in cursor.fetchall():
+                cursor.execute(
+                    "SELECT name, file_path, source_code FROM chunks WHERE id = ?", (caller_chunk_id,)
+                )
+                caller = cursor.fetchone()
+                if caller and caller[0] not in seen:
+                    context.append(f"--- NEIGHBOR (caller): {caller[1]} | {caller[0]} ---\n{caller[2]}")
+                    seen.add(caller[0])
+ 
         conn.close()
-        answer = chat_with_ollama(f"Context:\n" + "\n\n".join(context) + f"\n\nQuestion: {question}", model=model)
+
+        recent = get_recent_turns(repo_name, n=4)
+        memory_block = ""
+        if recent:
+            memory_block = "\n\nPrevious conversation:\n"
+            for q, a in recent:
+                memory_block += f"Q: {q}\nA: {a}\n\n"
+
+        prompt = (
+            "You are a code assistant. Use the provided code context to answer the question.\n\n"
+            f"Code context:\n" + "\n\n".join(context) +
+            memory_block +
+            f"\n\nQuestion: {question}"
+        )
+        answer = chat_with_ollama(prompt, model=model)
+
+        save_turn(repo_name, question, answer)
+ 
     console.print(f"\n[bold magenta]Q:[/] {question}\n" + "-"*30 + f"\n{answer}")
+ 
+ 
+@cli.command()
+def history():
+    """Show conversation history for the current indexed repository."""
+    from cpnlookup.retrieval.memory import get_all_history
+    reg = get_registry()
+    repo_name = reg.get(os.getcwd(), None)
+    if not repo_name:
+        console.print("[yellow]No indexed repository found in this directory.[/]"); return
+ 
+    turns = get_all_history(repo_name)
+    if not turns:
+        console.print(f"[dim]No conversation history for [bold]{repo_name}[/].[/]"); return
+ 
+    table = Table(title=f"History — {repo_name}", box=box.ROUNDED, header_style="bold magenta")
+    table.add_column("#",         style="dim",    no_wrap=True)
+    table.add_column("Timestamp", style="dim",    no_wrap=True)
+    table.add_column("Question",  style="cyan",   no_wrap=False)
+    table.add_column("Answer",    style="white",  no_wrap=False)
+ 
+    for t in turns:
+        ts = t['timestamp'][:16].replace("T", " ")  # trim to YYYY-MM-DD HH:MM
+        # Truncate long answers for display; full text is in the db.
+        answer_preview = t['answer'][:120] + "..." if len(t['answer']) > 120 else t['answer']
+        table.add_row(str(t['id']), ts, t['question'], answer_preview)
+ 
+    console.print(table)
+ 
+ 
+@cli.command()
+@click.option('--all', 'wipe_all', is_flag=True, default=False,
+              help="Clear memory for ALL repositories, not just the current one.")
+def forget(wipe_all: bool):
+    """Clear conversation memory for the current repository (or all repos with --all)."""
+    from cpnlookup.retrieval.memory import clear_memory, clear_all_memory
+    if wipe_all:
+        if click.confirm("Delete ALL conversation history across every repository?"):
+            n = clear_all_memory()
+            console.print(f"[green]✓[/] Cleared {n} conversation turns.")
+    else:
+        reg = get_registry()
+        repo_name = reg.get(os.getcwd(), None)
+        if not repo_name:
+            console.print("[yellow]No indexed repository found in this directory.[/]"); return
+        if click.confirm(f"Delete conversation history for [bold]{repo_name}[/]?"):
+            n = clear_memory(repo_name)
+            console.print(f"[green]✓[/] Cleared {n} conversation turns for {repo_name}.")
 
 @cli.command()
 def functions():
