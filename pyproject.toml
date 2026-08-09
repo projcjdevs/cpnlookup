@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cpnlookup"
-version = "2.5.0b1"
+version = "3.0.0b1"
 description = "Local CLI tool for GitHub RAG, Call Graphs, and Codebase querying -- v2.0.0 - Forge"
 readme = "README.md"
 requires-python = ">=3.9"

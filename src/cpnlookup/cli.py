@@ -30,7 +30,7 @@ def print_welcome_screen():
 ██║     ██╔═══╝ ██║╚██╗██║██║     ██║   ██║██║   ██║██╔═██╗ ██║   ██║██╔═══╝ 
 ╚██████╗██║     ██║ ╚████║███████╗╚██████╔╝╚██████╔╝██║  ██╗╚██████╔╝██║     
  ╚═════╝╚═╝     ╚═╝  ╚═══╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝   
- v2.0.0 - Forge: Consistent, Incremental, Reliable Indexing | by @projcjdevs  
+ v3.0.0 beta - Flux: Smarter retrieval. Deeper context. Persistent memory. | by @projcjdevs  
     """
     console.print(f"[bold magenta]{header}[/]")
     ollama_status = "[bold green]Running[/]" if check_ollama() else "[bold red]Not Found (Required for 'ask')[/]"
