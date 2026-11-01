@@ -1,22 +1,49 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cpnlookup"
-version = "3.0.0b1"
-description = "Local CLI tool for GitHub RAG, Call Graphs, and Codebase querying -- v2.0.0 - Forge"
+version = "3.0.0"
+description = "Ask questions about any GitHub repository from your terminal, locally: hybrid RAG (FAISS + BM25 + reranker + call graph) on Ollama."
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = [
-    "click>=8.0.0",
-    "rich>=13.0.0",
-    "requests>=2.0.0",
-    "sentence-transformers>=2.2.0",
-    "faiss-cpu>=1.7.0",
-    "numpy>=1.21.0",
-    "rank-bm25>=0.2.2",
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Charles Cabatian" }]
+keywords = ["rag", "github", "cli", "ollama", "code-search", "faiss", "bm25", "llm", "local-first"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+dependencies = [
+    "click>=8.1",
+    "rich>=13.7",
+    "requests>=2.31",
+    "numpy>=1.24",
+    "faiss-cpu>=1.9.0",
+    "sentence-transformers>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "build", "twine"]
+
+[project.urls]
+Homepage = "https://github.com/projcjdevs/cpnlookup"
+Repository = "https://github.com/projcjdevs/cpnlookup"
+Issues = "https://github.com/projcjdevs/cpnlookup/issues"
 
 [project.scripts]
 lookup = "cpnlookup.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
