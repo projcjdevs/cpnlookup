@@ -20,14 +20,14 @@ def expand(conn, chunks: list, max_neighbors: int) -> list:
         for n in rows_to_chunks(callers): add("CALLER", n)
     return out
 
-def build_prompt(question: str, items: list, turns: list, num_ctx: int) -> str:
-    """Adds context blocks in order until the character budget is spent; the first match is always included."""
-    budget, blocks = int(num_ctx * CHARS_PER_CTX_TOKEN), []
+def build_prompt(question: str, items: list, turns: list, num_ctx: int) -> tuple:
+    """(prompt, the (label, chunk) items used). Adds context blocks in order until the character budget is spent; the first match is always included."""
+    budget, blocks, used = int(num_ctx * CHARS_PER_CTX_TOKEN), [], []
     for label, c in items:
         block = f"--- {label}: {c['file_path']}:{c['line_start']} | {c['name']} ---\n{c['source_code']}"
         if blocks and len(block) > budget: continue
-        blocks.append(block[:budget]); budget -= len(block)
+        blocks.append(block[:budget]); used.append((label, c)); budget -= len(block)
     memory = "".join(f"Q: {q}\nA: {a[:MEMORY_ANSWER_CHARS]}\n\n" for q, a in turns)
     return ("You are a code assistant. Answer the question using the code context below. "
             "If the context does not contain the answer, say so.\n\nCode context:\n" + "\n\n".join(blocks)
-            + (f"\n\nPrevious conversation:\n{memory}" if memory else "") + f"\n\nQuestion: {question}")
+            + (f"\n\nPrevious conversation:\n{memory}" if memory else "") + f"\n\nQuestion: {question}"), used
