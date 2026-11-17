@@ -44,6 +44,9 @@ def test_config_validation(isolated):
     with pytest.raises(ValueError, match="whole number"): set_local_config("top_k", "abc")
     with pytest.raises(ValueError, match="at least 1"): set_local_config("top_k", "0")
     assert set_local_config("top_k", "7") == 7 and get_local_config()["top_k"] == 7 and get_local_config()["num_ctx"] == 8192
+    with pytest.raises(ValueError, match="one of: on, off"): set_local_config("rerank", "maybe")
+    with pytest.raises(ValueError, match="cannot be empty"): set_local_config("model", " ")
+    assert get_local_config()["rerank"] == "on" and set_local_config("rerank", "OFF") == "off" and get_local_config()["rerank"] == "off"
 
 def test_registry_merges_equivalent_paths(isolated):
     update_registry(str(isolated), "a/b"); update_registry(str(isolated) + "/.", "c/d")

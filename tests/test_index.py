@@ -89,6 +89,33 @@ def test_expand_caps_neighbors_and_keeps_same_named_chunks(gh):
 def test_build_prompt_budget_keeps_first_match():
     big = {"file_path": "a.py", "line_start": 1, "name": "big", "source_code": "x" * 50_000}
     small = {"file_path": "b.py", "line_start": 1, "name": "small", "source_code": "y" * 100}
-    prompt = build_prompt("Q?", [("MATCH", big), ("CALLER", small)], [("old q", "a" * 5000)], num_ctx=2048)
-    assert "--- MATCH: a.py:1 | big ---" in prompt and "small" not in prompt
+    prompt, used = build_prompt("Q?", [("MATCH", big), ("CALLER", small)], [("old q", "a" * 5000)], num_ctx=2048)
+    assert "--- MATCH: a.py:1 | big ---" in prompt and "small" not in prompt and used == [("MATCH", big)]   # only what was sent is cited
     assert len(prompt) < 2048 * 2.5 + 2000 and prompt.endswith("Question: Q?") and "a" * 1001 not in prompt
+
+def test_embed_model_is_recorded_and_a_30_index_stays_usable(gh):
+    from cpnlookup.indexer.embedder import EMBED_ID
+    run_init("o/r"); embedded = sum(gh.embed_calls)
+    assert q("SELECT value FROM repo_meta WHERE key = 'embed_model'") == [(EMBED_ID,)] and storage.index_note() is None
+    with closing(storage.connect()) as conn: conn.execute("DELETE FROM repo_meta WHERE key = 'embed_model'"); conn.commit()   # what 3.0 wrote
+    assert storage.index_problem() is None and "lookup init" in storage.index_note()
+    r = run_init("o/r")
+    assert r["up_to_date"] and not r["reembedded"] and sum(gh.embed_calls) == embedded and storage.index_note() is None
+
+def test_other_embedding_model_is_refused_then_reembedded_without_fetching(gh):
+    run_init("o/r"); fetched, total = list(gh.fetched), q("SELECT COUNT(*) FROM chunks")[0][0]
+    with closing(storage.connect()) as conn: storage.set_meta(conn, "embed_model", "some-other-model"); conn.commit()
+    assert "different model" in storage.index_problem()
+    r = run_init("o/r")
+    assert r["reembedded"] and not r["up_to_date"] and gh.fetched == fetched and gh.embed_calls[-1] == total
+    assert storage.index_problem() is None and not q("SELECT 1 FROM chunks WHERE embedding IS NULL OR faiss_id IS NULL")
+    assert storage.load_faiss_index().ntotal == total
+
+def test_retrieve_without_rerank_uses_fused_order(gh, monkeypatch):
+    run_init("o/r")
+    by_name = {name: fid for fid, name in q("SELECT faiss_id, name FROM chunks WHERE chunk_type != 'documentation'")}
+    monkeypatch.setattr(search, "dense_search", lambda query, k: [by_name["my_parse"], by_name["fetch_repo_tree"]])
+    def no_rerank(*a): raise AssertionError("rerank is off")
+    monkeypatch.setattr(search, "rerank", no_rerank)
+    with closing(storage.connect()) as conn: got = search.retrieve(conn, "list files", 2, use_rerank=False)
+    assert [c["name"] for c in got] == ["fetch_repo_tree", "my_parse"]              # found by both searches, so it outranks dense-only my_parse
