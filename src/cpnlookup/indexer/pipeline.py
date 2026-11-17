@@ -1,7 +1,7 @@
 import os
 import re
 from contextlib import closing
-from cpnlookup import github
+from cpnlookup import __version__, github
 from cpnlookup.config import update_registry
 from cpnlookup.indexer import chunker, embedder, storage
 
@@ -42,10 +42,14 @@ def run_init(repo: str, log=lambda msg: None) -> dict:
         old = dict(conn.execute("SELECT file_path, file_hash FROM raw_files").fetchall())
         paths = {f["path"] for f in tree}
         changed, removed = [f for f in tree if old.get(f["path"]) != f["sha"]], [p for p in old if p not in paths]
-        result = {"repo": repo, "fresh": not old, "changed": len(changed), "removed": len(removed), "truncated": truncated, "upgraded": upgraded, "up_to_date": False}
-        if not changed and not removed and storage.get_meta(conn, "index_status") == "complete" and storage.get_meta(conn, "repo") == repo:
-            result["up_to_date"] = True; return result
-        storage.set_meta(conn, "index_status", "pending"); storage.set_meta(conn, "repo", repo); conn.commit()
+        model = storage.get_meta(conn, "embed_model"); stale = model not in (None, embedder.EMBED_ID)   # None: a 3.0 index, same vectors
+        result = {"repo": repo, "fresh": not old, "changed": len(changed), "removed": len(removed), "truncated": truncated, "upgraded": upgraded,
+                  "up_to_date": False, "reembedded": stale}
+        if not changed and not removed and not stale and storage.get_meta(conn, "index_status") == "complete" and storage.get_meta(conn, "repo") == repo:
+            storage.set_meta(conn, "embed_model", embedder.EMBED_ID); storage.set_meta(conn, "cpnlookup_version", __version__); conn.commit(); result["up_to_date"] = True; return result
+        storage.set_meta(conn, "index_status", "pending"); storage.set_meta(conn, "repo", repo)
+        if stale: conn.execute("UPDATE chunks SET embedding = NULL, faiss_id = NULL")
+        conn.commit()
         for p in removed: storage.delete_file_data(conn, p)
         for i, f in enumerate(changed, 1):
             log(f"Fetching {i}/{len(changed)}: {f['path']}")
@@ -60,6 +64,6 @@ def run_init(repo: str, log=lambda msg: None) -> dict:
         result["embedded"] = embed_missing(conn, log); conn.commit()
         log("Writing vector index..."); rebuild_faiss(conn)
         result["total"] = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        storage.set_meta(conn, "index_status", "complete"); conn.commit()
+        storage.set_meta(conn, "embed_model", embedder.EMBED_ID); storage.set_meta(conn, "cpnlookup_version", __version__); storage.set_meta(conn, "index_status", "complete"); conn.commit()
     update_registry(os.getcwd(), repo)
     return result

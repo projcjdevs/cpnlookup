@@ -4,13 +4,14 @@ import click
 from cpnlookup import __version__, ui
 from cpnlookup.ui import console, esc, fail
 from cpnlookup.config import save_github_token, get_local_config, set_local_config, update_registry, get_registry, local_dir
-from cpnlookup.indexer.storage import connect, index_problem, current_repo, clear_local_index
+from cpnlookup.indexer.storage import connect, index_problem, index_note, index_state, current_repo, clear_local_index
 
 @click.group(invoke_without_command=True)
 @click.version_option(__version__, "-V", "--version", prog_name="cpnlookup")
 @click.pass_context
 def cli(ctx):
     """cpnlookup: ask questions about any GitHub repository, locally."""
+    ui.fix_stdout()
     if ctx.invoked_subcommand is None: ui.welcome()
 
 @cli.command()
@@ -62,31 +63,52 @@ def init(repo_name: str):
         except GitHubError as e: fail(esc(str(e)))
         except Exception as e: fail(f"{esc(str(e))}\n[dim]The index is marked incomplete; run lookup init again.[/]")
     if r["upgraded"]: console.print("[yellow]Rebuilt an index created by an older cpnlookup version.[/]")
+    if r["reembedded"]: console.print("[yellow]Embeddings were rebuilt for the current search model.[/]")
     if r["truncated"]: console.print("[yellow]GitHub truncated the file tree for this very large repo; some files were not indexed.[/]")
     if r["up_to_date"]: console.print("[bold green]✓[/] Index is already up to date."); return
     if r["fresh"]: console.print(f"[bold green]✓[/] Indexed {r['total']} chunks with {r['edges']} call edges.")
     else: console.print(f"[bold green]✓[/] Re-indexed: {r['changed']} changed, {r['removed']} removed, {r['total']} chunks total.")
 
+def _ready() -> tuple:
+    """(settings, repo) for ask and chat. Fails with the exact fix when the index or Ollama can't be used."""
+    from cpnlookup.llm import ensure_ready, OllamaError
+    problem = index_problem()
+    if problem: fail(problem)
+    cfg = get_local_config()
+    try: ensure_ready(cfg["model"])
+    except OllamaError as e: fail(esc(str(e)))
+    note = index_note()
+    if note: console.print(f"[dim]{note}[/]")
+    return cfg, current_repo() or "unknown"
+
 @cli.command()
 @click.argument('question')
 def ask(question: str):
     """Ask a question about the indexed repository."""
-    from cpnlookup.llm import check_ollama, chat_with_ollama, OllamaError
-    from cpnlookup.retrieval.search import retrieve
-    from cpnlookup.retrieval.context import expand, build_prompt
-    from cpnlookup.retrieval.memory import get_recent_turns, save_turn
-    problem = index_problem()
-    if problem: fail(problem)
-    if not check_ollama(): fail("Ollama is not running. Start it with [bold]ollama serve[/].")
-    cfg = get_local_config(); repo = current_repo() or "unknown"
-    with console.status("[cyan]Searching the index (loading models)...") as status:
-        with closing(connect()) as conn: items = expand(conn, retrieve(conn, question, cfg["top_k"]), cfg["max_neighbors"])
-        prompt = build_prompt(question, items, get_recent_turns(repo, n=4), cfg["num_ctx"])
-        status.update(f"[cyan]Asking {esc(cfg['model'])}...")
-        try: answer = chat_with_ollama(prompt, model=cfg["model"], num_ctx=cfg["num_ctx"])
-        except OllamaError as e: fail(esc(str(e)))
-    save_turn(repo, question, answer)
-    console.print(f"\n[bold magenta]Q:[/] {esc(question)}\n" + "-" * 30); console.print(answer, markup=False, highlight=False)
+    from cpnlookup.llm import OllamaError
+    from cpnlookup.indexer.embedder import ModelError
+    from cpnlookup.retrieval import answer
+    cfg, repo = _ready()
+    console.print(f"[bold magenta]Q:[/] {esc(question)}\n" + "-" * 30)
+    try: answer.ask(question, cfg, repo)
+    except (OllamaError, ModelError) as e: fail(esc(str(e)))
+
+@cli.command()
+def chat():
+    """Ask several questions in one session. The models load once and earlier turns are remembered."""
+    from cpnlookup.llm import OllamaError
+    from cpnlookup.indexer.embedder import ModelError
+    from cpnlookup.retrieval import answer
+    cfg, repo = _ready()
+    console.print(f"[dim]Chatting about [bold]{esc(repo)}[/] with {esc(cfg['model'])}. Type exit to leave.[/]")
+    while True:
+        try: question = console.input("\n[bold magenta]>[/] ").strip()
+        except (EOFError, KeyboardInterrupt): console.print(); break
+        if question.lower() in ("exit", "quit"): break
+        if not question: continue
+        try: answer.ask(question, cfg, repo)
+        except (OllamaError, ModelError) as e: console.print(f"[bold red]Error:[/] {esc(str(e))}")
+        except KeyboardInterrupt: console.print("\n[dim]Stopped. That answer was not saved.[/]")
 
 @cli.command()
 def history():
@@ -122,18 +144,18 @@ def functions():
 
 @cli.command()
 def indexed():
-    """List every directory on this machine that has an index."""
+    """List every directory on this machine that has an index, and the cpnlookup version that built it."""
     reg = get_registry()
     if not reg: console.print("[yellow]No indexes yet. Run lookup init <owner/repo> in a project directory.[/]"); return
-    table = ui.table("Indexed repositories", ("Repo", "cyan"), ("Path", "green"), ("Status", None))
-    for p, r in reg.items(): table.add_row(esc(r), esc(p), "[green]Active[/]" if os.path.exists(os.path.join(p, ".cpnlookup", "index.db")) else "[red]Missing[/]")
+    table = ui.table("Indexed repositories", ("Repo", "cyan"), ("Path", "green"), ("Indexed with", None), ("Status", None))
+    for p, r in reg.items(): version, status = index_state(os.path.join(p, ".cpnlookup", "index.db")); table.add_row(esc(r), esc(p), esc(version), status)
     console.print(table)
 
 @cli.command()
 @click.argument('key', required=False)
 @click.argument('value', required=False)
 def config(key, value):
-    """Show settings, or set one: model, top_k, num_ctx, max_neighbors."""
+    """Show settings, or set one: model, top_k, num_ctx, max_neighbors, rerank."""
     if key is None:
         table = ui.table("Settings for this directory", ("Key", "cyan"), ("Value", None))
         for k, v in get_local_config().items(): table.add_row(k, esc(str(v)))

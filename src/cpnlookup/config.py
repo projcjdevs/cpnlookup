@@ -2,8 +2,9 @@ import json
 import os
 from pathlib import Path
 
-DEFAULTS = {"model": "mistral", "top_k": 5, "num_ctx": 8192, "max_neighbors": 3}
+DEFAULTS = {"model": "mistral", "top_k": 5, "num_ctx": 8192, "max_neighbors": 3, "rerank": "on"}
 INT_KEYS = {"top_k", "num_ctx", "max_neighbors"}
+CHOICES = {"rerank": ("on", "off")}
 
 def get_global_dir() -> Path:
     d = Path.home() / ".cpnlookup"; d.mkdir(parents=True, exist_ok=True); return d
@@ -34,6 +35,10 @@ def set_local_config(key: str, value: str):
         try: value = int(value)
         except ValueError: raise ValueError(f"'{key}' must be a whole number.") from None
         if value < 1: raise ValueError(f"'{key}' must be at least 1.")
+    if key in CHOICES:
+        value = value.strip().lower()
+        if value not in CHOICES[key]: raise ValueError(f"'{key}' must be one of: {', '.join(CHOICES[key])}.")
+    if not str(value).strip(): raise ValueError(f"'{key}' cannot be empty.")
     if not local_dir().exists(): raise ValueError("No index in this directory. Run lookup init <owner/repo> first.")
     p = local_dir() / "config.json"; cfg = _read_json(p, {}); cfg[key] = value; _write_json(p, cfg)
     return value

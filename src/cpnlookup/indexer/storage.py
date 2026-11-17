@@ -3,6 +3,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 from cpnlookup.config import local_dir, registry_lookup
+from cpnlookup.indexer.embedder import EMBED_ID
 
 SCHEMA_VERSION = "3"
 SCHEMA = """
@@ -56,10 +57,26 @@ def prepare_index() -> bool:
 def index_problem():
     """Returns a user-facing message if this directory has no usable index, else None."""
     if not has_index(): return "No index in this directory. Run [bold]lookup init <owner/repo>[/] first."
-    with closing(connect()) as conn: version, status = get_meta(conn, "schema_version"), get_meta(conn, "index_status")
+    with closing(connect()) as conn: version, status, model = (get_meta(conn, k) for k in ("schema_version", "index_status", "embed_model"))
     if version != SCHEMA_VERSION: return "This index was built by an older cpnlookup. Run [bold]lookup init[/] to rebuild it."
     if status != "complete": return "The index is incomplete (an earlier run stopped). Run [bold]lookup init[/] again."
+    if model not in (None, EMBED_ID): return "This index was embedded with a different model. Run [bold]lookup init[/] to re-embed it (no files are downloaded again)."
     return None
+
+def index_note():
+    """A suggestion, not an error: an index from cpnlookup 3.0 has the same vectors and works, but has never been refreshed by 3.1."""
+    with closing(connect()) as conn: model = get_meta(conn, "embed_model")
+    return None if model else "This index was built by cpnlookup 3.0. It works as it is; run lookup init once to refresh it."
+
+def index_state(db) -> tuple:
+    """(cpnlookup version that last ran init on the index at `db`, status markup) for `lookup indexed`."""
+    if not Path(db).exists(): return "-", "[red]Missing[/]"
+    try:
+        with closing(sqlite3.connect(db)) as conn: schema, status, version = (get_meta(conn, k) for k in ("schema_version", "index_status", "cpnlookup_version"))
+    except sqlite3.Error: return "?", "[red]Unreadable[/]"
+    if schema != SCHEMA_VERSION: return "2.x or older", "[red]Run lookup init[/]"
+    if status != "complete": return version or "3.0", "[yellow]Incomplete: run lookup init[/]"
+    return (version, "[green]Active[/]") if version else ("3.0", "[yellow]Active (lookup init suggested)[/]")
 
 def current_repo():
     """Repo of this directory's index (repo_meta), falling back to the global registry."""
