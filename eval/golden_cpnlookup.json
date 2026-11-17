@@ -1,0 +1,32 @@
+{
+  "repo": "projcjdevs/cpnlookup",
+  "ref": "v3.0.0",
+  "note": "Each question lists the chunks that answer it as [file_path, name]. A question counts as a hit when any of them is retrieved.",
+  "questions": [
+    {"q": "How does incremental indexing decide which files to download again?", "expect": [["src/cpnlookup/indexer/pipeline.py", "run_init"]]},
+    {"q": "Where is the GitHub API rate limit handled?", "expect": [["src/cpnlookup/github.py", "_get"]]},
+    {"q": "How are call graph edges built between functions?", "expect": [["src/cpnlookup/indexer/pipeline.py", "build_edges"]]},
+    {"q": "Which files are skipped during indexing?", "expect": [["src/cpnlookup/github.py", "should_skip_file"]]},
+    {"q": "How is a Markdown file split into sections?", "expect": [["src/cpnlookup/indexer/chunker.py", "chunk_markdown"]]},
+    {"q": "How does the tool combine keyword search and vector search results?", "expect": [["src/cpnlookup/retrieval/search.py", "merge"], ["src/cpnlookup/retrieval/search.py", "retrieve"]]},
+    {"q": "How are candidate chunks reranked?", "expect": [["src/cpnlookup/retrieval/search.py", "rerank"]]},
+    {"q": "How is the prompt size kept within the model's context window?", "expect": [["src/cpnlookup/retrieval/context.py", "build_prompt"]]},
+    {"q": "Where are callers and callees added to the context?", "expect": [["src/cpnlookup/retrieval/context.py", "expand"]]},
+    {"q": "How is the GitHub token saved?", "expect": [["src/cpnlookup/config.py", "save_github_token"]]},
+    {"q": "What happens when Ollama returns an error?", "expect": [["src/cpnlookup/llm.py", "chat_with_ollama"]]},
+    {"q": "How does the tool check whether an index is usable before answering?", "expect": [["src/cpnlookup/indexer/storage.py", "index_problem"]]},
+    {"q": "Where is conversation history stored and how are recent turns loaded?", "expect": [["src/cpnlookup/retrieval/memory.py", "get_recent_turns"], ["src/cpnlookup/retrieval/memory.py", "_connect"]]},
+    {"q": "How are config values validated when the user sets them?", "expect": [["src/cpnlookup/config.py", "set_local_config"]]},
+    {"q": "What text is embedded for each chunk?", "expect": [["src/cpnlookup/indexer/embedder.py", "embed_text"]]},
+    {"q": "How does it parse a repository URL into owner/repo?", "expect": [["src/cpnlookup/github.py", "parse_repo"]]},
+    {"q": "What happens to an index created by an older version?", "expect": [["src/cpnlookup/indexer/storage.py", "prepare_index"], ["README.md", "README: Upgrading from 2.x or 3.0.0b1"]]},
+    {"q": "How do I install cpnlookup?", "expect": [["README.md", "README: Installation"]]},
+    {"q": "What settings can I change and what are the defaults?", "expect": [["README.md", "README: Settings"], ["src/cpnlookup/config.py", "get_local_config"]]},
+    {"q": "How does the ask command work end to end?", "expect": [["src/cpnlookup/cli.py", "ask"], ["README.md", "README: How it works"]]},
+    {"q": "How is the FAISS index written and how do chunks get their position?", "expect": [["src/cpnlookup/indexer/pipeline.py", "rebuild_faiss"]]},
+    {"q": "How are Python functions and classes extracted from a source file?", "expect": [["src/cpnlookup/indexer/chunker.py", "chunk_python_code"]]},
+    {"q": "How does it turn a question into a full-text search query?", "expect": [["src/cpnlookup/retrieval/search.py", "fts_query"], ["src/cpnlookup/retrieval/search.py", "sparse_search"]]},
+    {"q": "How does it list a user's repositories?", "expect": [["src/cpnlookup/github.py", "get_user_repos"], ["src/cpnlookup/cli.py", "profile"]]},
+    {"q": "Is my code sent anywhere?", "expect": [["README.md", "README: Privacy"]]}
+  ]
+}
