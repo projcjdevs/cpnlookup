@@ -4,16 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cpnlookup"
-version = "3.0.0"
-description = "Ask questions about any GitHub repository from your terminal, locally: hybrid RAG (FAISS + BM25 + reranker + call graph) on Ollama."
+version = "3.1.0b1"
+description = "Ask questions about any GitHub repository from your terminal, locally: hybrid RAG (FAISS + BM25 + reranker + call graph) on Ollama, no PyTorch."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Charles Cabatian" }]
 keywords = ["rag", "github", "cli", "ollama", "code-search", "faiss", "bm25", "llm", "local-first"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -28,7 +28,9 @@ dependencies = [
     "requests>=2.31",
     "numpy>=1.24",
     "faiss-cpu>=1.9.0",
-    "sentence-transformers>=4.0",
+    "onnxruntime>=1.21",
+    "tokenizers>=0.20",
+    "huggingface-hub>=0.24",
 ]
 
 [project.optional-dependencies]
