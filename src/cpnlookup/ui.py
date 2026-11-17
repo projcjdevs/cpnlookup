@@ -118,7 +118,7 @@ def desc() -> None:
                 ("v1.2.2", "Lazy Imports", "Heavy ML imports moved into functions; light commands start instantly."),
                 ("v2.0.0", "Forge", "Incremental indexing, write consistency, embedding storage, faiss_id mapping,\ncallers + callees in context."),
                 ("v3.0.0", "Flux", "Hybrid retrieval (BM25 + FAISS + cross-encoder), conversation memory, history and\nforget. Leaner codebase, index schema v3, context budget, many correctness fixes."),
-                ("v3.1.0", "Featherweight", "Models on ONNX Runtime instead of PyTorch: questions start in under a second.\nStreamed answers, lookup chat, source citations, OLLAMA_HOST, rerank on/off.")]:
+                ("v3.1.0", "Featherweight", "Models on ONNX Runtime instead of PyTorch: a question reaches the model in about\n1.5 s instead of 10. Streamed answers, lookup chat, sources and timings, index\nversions in lookup indexed, OLLAMA_HOST, rerank on/off.")]:
         log.add_row(*row)
     console.print(Panel(log, title="[bold white]Version history[/]", border_style="cyan", box=box.ROUNDED))
     console.print(Panel("[bold white]Developer[/]\n  [bold magenta]@projcjdevs[/] — architecture, implementation and maintenance\n\n[bold white]Special thanks[/]\n"

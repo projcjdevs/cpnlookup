@@ -172,7 +172,7 @@ The index format changed in 3.0.0. The first `lookup init` after upgrading rebui
 | v1.2.2 | Lazy Imports | Heavy ML imports moved into functions; light commands start instantly |
 | v2.0.0 | Forge | Incremental indexing, write consistency, stored embeddings, `faiss_id` mapping, callers + callees |
 | v3.0.0 | Flux | Hybrid retrieval (FAISS + FTS5 BM25 + cross-encoder), conversation memory, `history` / `forget`, context budget, new index format, leaner and faster codebase |
-| v3.1.0 | Featherweight | Models on ONNX Runtime instead of PyTorch (a question reaches the model in about 2 s instead of 10), streamed answers, `lookup chat`, source citations, `OLLAMA_HOST`, `rerank` setting, clearer Ollama errors |
+| v3.1.0 | Featherweight | Models on ONNX Runtime instead of PyTorch (a question reaches the model in about 1.5 s instead of 10), streamed answers, `lookup chat`, source citations and timings, index versions in `lookup indexed`, `OLLAMA_HOST`, `rerank` setting, clearer Ollama errors |
 
 ## Privacy
 
